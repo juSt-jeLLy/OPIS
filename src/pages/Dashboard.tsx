@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   ChevronDown,
   Eye,
+  Play,
   Shield,
   TrendingUp,
   Zap,
@@ -23,6 +24,11 @@ import {
 import { useMonitoringLiveStream } from "@/features/monitoring/hooks/use-monitoring-live-stream";
 import { useMonitoringTokenSearch } from "@/features/monitoring/hooks/use-monitoring-token-search";
 import type { MonitoringChain, MonitoringWatchlistToken } from "@/features/monitoring/monitoring.types";
+import {
+  useDismissTradingAction,
+  useExecuteTradingAction,
+  useTradingActions,
+} from "@/features/trading/hooks/use-trading-actions";
 
 const CHAINS: MonitoringChain[] = ["solana", "bsc", "eth", "base"];
 type SearchChain = "all" | MonitoringChain;
@@ -59,9 +65,12 @@ const Dashboard = () => {
   const { data, isLoading, isFetching, isError } = useMonitoringOverview();
   const { data: watchlistData } = useMonitoringWatchlist();
   const replaceWatchlist = useReplaceMonitoringWatchlist();
+  const { data: actionsData } = useTradingActions();
+  const executeAction = useExecuteTradingAction();
+  const dismissAction = useDismissTradingAction();
 
-  const userWatchlist = watchlistData?.userWatchlist ?? [];
-  const systemWatchlist = watchlistData?.systemWatchlist ?? [];
+  const userWatchlist = useMemo(() => watchlistData?.userWatchlist ?? [], [watchlistData?.userWatchlist]);
+  const systemWatchlist = useMemo(() => watchlistData?.systemWatchlist ?? [], [watchlistData?.systemWatchlist]);
   const userWatchlistTokenIds = useMemo(() => new Set(userWatchlist.map((token) => token.tokenId)), [userWatchlist]);
 
   const { data: tokenSearchData, isFetching: isTokenSearchFetching } = useMonitoringTokenSearch(
@@ -103,8 +112,12 @@ const Dashboard = () => {
     return (tokenSearchData?.tokens ?? []).filter((token) => !userWatchlistTokenIds.has(token.tokenId));
   }, [tokenSearchData?.tokens, userWatchlistTokenIds]);
 
-  const handleReplaceUserWatchlist = async (tokens: MonitoringWatchlistToken[]) => {
+  const handleReplaceUserWatchlist = async (tokens: MonitoringWatchlistToken[], options?: { runCycle?: boolean }) => {
     await replaceWatchlist.mutateAsync(tokens);
+    if (options?.runCycle === false) {
+      return;
+    }
+
     await monitoringApi.runCycle().catch(() => {
       toast.warning("Watchlist updated. New signals will appear in the next cycle.");
     });
@@ -118,7 +131,10 @@ const Dashboard = () => {
     }
 
     try {
-      await handleReplaceUserWatchlist([token, ...userWatchlist]);
+      await handleReplaceUserWatchlist([
+        { ...token, executionMode: "trade", sellAmountAtomic: token.sellAmountAtomic ?? "100000000" },
+        ...userWatchlist,
+      ]);
       toast.success("Token added to your watchlist.");
     } catch {
       toast.error("Failed to update watchlist.");
@@ -131,6 +147,43 @@ const Dashboard = () => {
       toast.success("Token removed from your watchlist.");
     } catch {
       toast.error("Failed to update watchlist.");
+    }
+  };
+
+  const handleUpdateTokenConfig = async (
+    tokenId: string,
+    patch: Partial<Pick<MonitoringWatchlistToken, "executionMode" | "assetsId" | "sellAmountAtomic">>,
+  ) => {
+    const next = userWatchlist.map((token) => {
+      if (token.tokenId !== tokenId) {
+        return token;
+      }
+
+      return { ...token, ...patch };
+    });
+
+    try {
+      await handleReplaceUserWatchlist(next, { runCycle: false });
+    } catch {
+      toast.error("Failed to save token execution settings.");
+    }
+  };
+
+  const handleExecuteAction = async (actionId: string) => {
+    try {
+      await executeAction.mutateAsync({ actionId });
+      toast.success("Trade action submitted to AVE Trading Skill.");
+    } catch {
+      toast.error("Execution failed. Check assetsId and delegate wallet permissions.");
+    }
+  };
+
+  const handleDismissAction = async (actionId: string) => {
+    try {
+      await dismissAction.mutateAsync(actionId);
+      toast.success("Action dismissed.");
+    } catch {
+      toast.error("Unable to dismiss action.");
     }
   };
 
@@ -148,6 +201,14 @@ const Dashboard = () => {
   }, [data?.snapshots, userWatchlistTokenIds]);
 
   const alerts = data?.alerts ?? [];
+  const pendingActions = useMemo(
+    () =>
+      (actionsData?.actions ?? [])
+        .filter((action) => action.status === "pending")
+        .sort((left, right) => right.priority - left.priority)
+        .slice(0, 8),
+    [actionsData?.actions],
+  );
   const snapshotByTokenId = useMemo(
     () => new Map(orderedSnapshots.map((snapshot) => [snapshot.tokenId, snapshot])),
     [orderedSnapshots],
@@ -269,22 +330,68 @@ const Dashboard = () => {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="space-y-3">
             {userWatchlist.map((token) => (
-              <div key={token.tokenId} className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary">
-                <span className="font-mono">{token.symbol ?? token.tokenId}</span>
-                <span className="text-muted-foreground">{token.chain.toUpperCase()}</span>
-                <button
-                  type="button"
-                  onClick={() => void handleRemoveToken(token.tokenId)}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <X className="h-3 w-3" />
-                </button>
+              <div key={token.tokenId} className="rounded-xl border border-border/60 bg-background/40 p-4">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <p className="font-mono text-sm text-foreground">{token.symbol ?? token.tokenId}</p>
+                    <p className="text-xs text-muted-foreground break-all">
+                      {token.name ?? token.tokenId} · {token.chain.toUpperCase()}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleRemoveToken(token.tokenId)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-3">
+                  <select
+                    value={token.executionMode ?? "trade"}
+                    onChange={(event) =>
+                      void handleUpdateTokenConfig(token.tokenId, {
+                        executionMode: event.target.value === "delegate_exit" ? "delegate_exit" : "trade",
+                      })
+                    }
+                    className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
+                  >
+                    <option value="trade">Trade API (manual)</option>
+                    <option value="delegate_exit">Delegate Auto Exit</option>
+                  </select>
+                  {token.executionMode === "delegate_exit" ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <input
+                        defaultValue={token.assetsId ?? ""}
+                        onBlur={(event) =>
+                          void handleUpdateTokenConfig(token.tokenId, { assetsId: event.target.value.trim() })
+                        }
+                        placeholder="Delegate assetsId"
+                        className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
+                      />
+                      <input
+                        defaultValue={token.sellAmountAtomic ?? ""}
+                        onBlur={(event) =>
+                          void handleUpdateTokenConfig(token.tokenId, { sellAmountAtomic: event.target.value.trim() })
+                        }
+                        placeholder="Auto-exit amount (atomic)"
+                        className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
+                      />
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-border/60 bg-background/20 px-3 py-2 text-xs text-muted-foreground">
+                      Manual mode: buy/exit amount is chosen directly on the Signals page action button.
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
             {userWatchlist.length === 0 && (
-              <p className="text-sm text-muted-foreground">No custom tokens yet. Added tokens stay pinned on top.</p>
+              <p className="text-sm text-muted-foreground">
+                No custom tokens yet. Added tokens stay pinned and can be set to Trade API or Delegate Auto Exit.
+              </p>
             )}
           </div>
 
@@ -417,7 +524,49 @@ const Dashboard = () => {
             </GlowingCard>
           </div>
 
-          <div>
+          <div className="space-y-6">
+            <GlowingCard>
+              <h2 className="text-lg font-bold text-foreground mb-4 flex items-center gap-2">
+                <Zap className="h-5 w-5 text-primary" />
+                Trade Actions
+              </h2>
+              <div className="space-y-3">
+                {pendingActions.map((action) => (
+                  <div key={action.id} className="rounded-lg border border-border/60 bg-background/40 p-3">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <p className="text-sm font-semibold text-foreground">
+                        {action.actionType === "buy" ? "Buy" : "Exit"} {action.symbol}
+                      </p>
+                      <span className="text-[10px] font-mono uppercase text-primary">{action.executionMode}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-2">{action.reason}</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleExecuteAction(action.id)}
+                        disabled={executeAction.isPending}
+                        className="inline-flex items-center gap-1 rounded-lg bg-primary/20 px-2.5 py-1.5 text-xs font-semibold text-primary disabled:opacity-50"
+                      >
+                        <Play className="h-3 w-3" />
+                        Execute
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDismissAction(action.id)}
+                        disabled={dismissAction.isPending}
+                        className="rounded-lg bg-muted px-2.5 py-1.5 text-xs font-semibold text-muted-foreground disabled:opacity-50"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {pendingActions.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No pending buy/exit actions right now.</p>
+                )}
+              </div>
+            </GlowingCard>
+
             <GlowingCard>
               <h2 className="text-lg font-bold text-foreground mb-6 flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5 text-primary" />

@@ -66,6 +66,11 @@ export interface MonitoringOverviewResponse {
   generatedAt: string;
 }
 
+export interface MonitoringLiveStreamEvent {
+  overview: MonitoringOverviewResponse;
+  signals: MonitoringSignal[];
+}
+
 export interface MonitoringSignalsResponse {
   signals: MonitoringSignal[];
 }
@@ -83,6 +88,10 @@ export interface MonitoringWatchlistToken {
   mainPair?: string;
   mainPairTvl?: number;
   createdAt?: number | string;
+  executionMode?: "trade" | "delegate_exit";
+  assetsId?: string;
+  buyAmountAtomic?: string;
+  sellAmountAtomic?: string;
 }
 
 export interface MonitoringWatchlistResponse {

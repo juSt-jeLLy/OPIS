@@ -31,13 +31,23 @@ const mergeWatchlists = (userWatchlist: WatchlistToken[], systemWatchlist: Watch
   return [...merged.values()];
 };
 
+const aggregateUserWatchlists = (watchlistsByUser: Map<string, WatchlistToken[]>): WatchlistToken[] => {
+  const merged = new Map<string, WatchlistToken>();
+  [...watchlistsByUser.values()].forEach((watchlist) => {
+    watchlist.forEach((token) => {
+      merged.set(watchlistKey(token), token);
+    });
+  });
+  return [...merged.values()];
+};
+
 export class MonitoringRepository {
   private readonly snapshots = new Map<string, MonitoringSnapshot>();
   private readonly signals: MonitoringSignal[] = [];
   private readonly alerts: MonitoringAlert[] = [];
   private readonly narrativeHistory = new Map<string, NarrativeSnapshot[]>();
   private systemWatchlist: WatchlistToken[] = [];
-  private userWatchlist: WatchlistToken[] = [];
+  private readonly userWatchlistByUser = new Map<string, WatchlistToken[]>();
 
   public upsertSnapshot(snapshot: MonitoringSnapshot): void {
     this.snapshots.set(`${snapshot.chain}:${snapshot.tokenId}`, snapshot);
@@ -69,20 +79,29 @@ export class MonitoringRepository {
     this.systemWatchlist = dedupeWatchlist(tokens);
   }
 
-  public replaceUserWatchlist(tokens: WatchlistToken[]): void {
-    this.userWatchlist = dedupeWatchlist(tokens);
+  public replaceUserWatchlist(userId: string, tokens: WatchlistToken[]): void {
+    this.userWatchlistByUser.set(userId, dedupeWatchlist(tokens));
   }
 
   public getSystemWatchlist(): WatchlistToken[] {
     return this.systemWatchlist;
   }
 
-  public getUserWatchlist(): WatchlistToken[] {
-    return this.userWatchlist;
+  public getUserWatchlist(userId: string): WatchlistToken[] {
+    return this.userWatchlistByUser.get(userId) ?? [];
   }
 
-  public getWatchlist(): WatchlistToken[] {
-    return mergeWatchlists(this.userWatchlist, this.systemWatchlist);
+  public getAllUserWatchlist(): WatchlistToken[] {
+    return aggregateUserWatchlists(this.userWatchlistByUser);
+  }
+
+  public getUserWatchlists(): Record<string, WatchlistToken[]> {
+    return Object.fromEntries([...this.userWatchlistByUser.entries()]);
+  }
+
+  public getWatchlist(userId?: string): WatchlistToken[] {
+    const userWatchlist = userId ? this.getUserWatchlist(userId) : this.getAllUserWatchlist();
+    return mergeWatchlists(userWatchlist, this.systemWatchlist);
   }
 
   public saveNarrativeSnapshots(snapshots: NarrativeSnapshot[]): void {

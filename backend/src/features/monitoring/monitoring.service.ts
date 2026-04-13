@@ -21,6 +21,7 @@ import type { ContractInfo, TokenSummary } from "../../shared/clients/ave/ave-cl
 import { TRENDING_CHAINS, type SupportedChain } from "../../shared/constants/chains.constants";
 import type { Logger } from "../../shared/logger/logger";
 import { toNumber } from "../../shared/utils/number.utils";
+import type { MonitoringPersistenceRepository } from "../persistence/monitoring-persistence.repository";
 
 const hasNarrativeChainSupport = (chain: SupportedChain): chain is "solana" | "bsc" | "eth" => {
   return TRENDING_CHAINS.includes(chain as "solana" | "bsc" | "eth");
@@ -152,11 +153,13 @@ const invalidateModulesForTrigger = (trigger: RealtimeTrigger): ModuleName[] => 
 };
 
 type OverviewListener = (overview: MonitoringOverview) => void;
+type SnapshotListener = (snapshot: MonitoringSnapshot, watchlistsByUser: Record<string, WatchlistToken[]>) => Promise<void> | void;
 const OVERVIEW_BROADCAST_DEBOUNCE_MS = 500;
 
 export class MonitoringService {
   private readonly moduleResultCache = new Map<string, { result: ModuleResult; expiresAt: number }>();
   private readonly overviewListeners = new Set<OverviewListener>();
+  private readonly snapshotListeners = new Set<SnapshotListener>();
   private overviewBroadcastTimer: NodeJS.Timeout | null = null;
 
   public constructor(
@@ -169,6 +172,7 @@ export class MonitoringService {
     private readonly narrativeModule: NarrativeModuleService,
     private readonly tosService: TosService,
     private readonly logger: Logger,
+    private readonly monitoringPersistence?: MonitoringPersistenceRepository,
   ) {}
 
   public async analyzeToken(input: AnalyzeTokenInput): Promise<MonitoringSnapshot> {
@@ -208,9 +212,21 @@ export class MonitoringService {
       updatedAt: new Date().toISOString(),
     };
 
+    const signals = buildSignalsFromSnapshot(snapshot);
+    const alerts = buildAlertsFromSnapshot(snapshot);
     this.repository.upsertSnapshot(snapshot);
-    this.repository.addSignals(buildSignalsFromSnapshot(snapshot));
-    this.repository.addAlerts(buildAlertsFromSnapshot(snapshot));
+    this.repository.addSignals(signals);
+    this.repository.addAlerts(alerts);
+    void this.monitoringPersistence?.saveSignals(signals);
+    void this.monitoringPersistence?.saveAlerts(alerts);
+    if (this.snapshotListeners.size > 0) {
+      const watchlistsByUser = this.repository.getUserWatchlists();
+      this.snapshotListeners.forEach((listener) => {
+        void Promise.resolve(listener(snapshot, watchlistsByUser)).catch((error) => {
+          this.logger.error("Snapshot listener failed", { tokenId: snapshot.tokenId, error: String(error) });
+        });
+      });
+    }
     this.scheduleOverviewBroadcast();
     return snapshot;
   }
@@ -228,7 +244,7 @@ export class MonitoringService {
     return { snapshots, alerts: this.repository.listAlerts(limit), generatedAt: new Date().toISOString() };
   }
 
-  public getSignals(limit = MAX_SIGNALS_RETURNED): MonitoringSignal[] {
+  public getSignals(limit = MAX_SIGNALS_RETURNED, userId?: string): MonitoringSignal[] {
     const dedupedByTokenModule = new Map<string, MonitoringSignal>();
     this.repository.listSignals(500).forEach((signal) => {
       const key = `${signal.tokenId}:${signal.module}`;
@@ -246,7 +262,7 @@ export class MonitoringService {
       });
     });
 
-    const userTokenIds = new Set(this.repository.getUserWatchlist().map((token) => token.tokenId));
+    const userTokenIds = new Set((userId ? this.repository.getUserWatchlist(userId) : []).map((token) => token.tokenId));
     const ordered = [...dedupedByTokenModule.values()].sort((left, right) => {
       const leftUser = userTokenIds.has(left.tokenId) ? 1 : 0;
       const rightUser = userTokenIds.has(right.tokenId) ? 1 : 0;
@@ -279,8 +295,8 @@ export class MonitoringService {
     return this.repository.listAlerts(limit);
   }
 
-  public replaceUserWatchlist(tokens: WatchlistToken[]): void {
-    this.repository.replaceUserWatchlist(tokens);
+  public replaceUserWatchlist(userId: string, tokens: WatchlistToken[]): void {
+    this.repository.replaceUserWatchlist(userId, tokens);
     this.scheduleOverviewBroadcast();
   }
 
@@ -289,28 +305,32 @@ export class MonitoringService {
     this.scheduleOverviewBroadcast();
   }
 
-  public getUserWatchlist(): WatchlistToken[] {
-    return this.repository.getUserWatchlist();
+  public getUserWatchlist(userId: string): WatchlistToken[] {
+    return this.repository.getUserWatchlist(userId);
+  }
+
+  public getUserWatchlists(): Record<string, WatchlistToken[]> {
+    return this.repository.getUserWatchlists();
   }
 
   public getSystemWatchlist(): WatchlistToken[] {
     return this.repository.getSystemWatchlist();
   }
 
-  public getWatchlists(): {
+  public getWatchlists(userId: string): {
     watchlist: WatchlistToken[];
     userWatchlist: WatchlistToken[];
     systemWatchlist: WatchlistToken[];
   } {
     return {
-      watchlist: this.repository.getWatchlist(),
-      userWatchlist: this.repository.getUserWatchlist(),
+      watchlist: this.repository.getWatchlist(userId),
+      userWatchlist: this.repository.getUserWatchlist(userId),
       systemWatchlist: this.repository.getSystemWatchlist(),
     };
   }
 
-  public getWatchlist(): WatchlistToken[] {
-    return this.repository.getWatchlist();
+  public getWatchlist(userId?: string): WatchlistToken[] {
+    return this.repository.getWatchlist(userId);
   }
 
   public async searchTokens(query: string, chain?: SupportedChain, limit = 40): Promise<WatchlistToken[]> {
@@ -359,6 +379,13 @@ export class MonitoringService {
     this.overviewListeners.add(listener);
     return () => {
       this.overviewListeners.delete(listener);
+    };
+  }
+
+  public subscribeSnapshots(listener: SnapshotListener): () => void {
+    this.snapshotListeners.add(listener);
+    return () => {
+      this.snapshotListeners.delete(listener);
     };
   }
 

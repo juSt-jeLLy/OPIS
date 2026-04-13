@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { MONITORING_API_BASE } from "../monitoring.constants";
-import type { MonitoringOverviewResponse } from "../monitoring.types";
+import { monitoringApi } from "../monitoring.api";
+import type { MonitoringLiveStreamEvent, MonitoringSignalsResponse } from "../monitoring.types";
 
 const LIVE_INVALIDATE_COOLDOWN_MS = 1_500;
 
@@ -10,12 +10,17 @@ export const useMonitoringLiveStream = () => {
 
   useEffect(() => {
     let lastInvalidateAt = 0;
-    const source = new EventSource(`${MONITORING_API_BASE}/stream`);
+    const source = new EventSource(monitoringApi.streamUrl());
 
     source.onmessage = (event) => {
       try {
-        const overview = JSON.parse(event.data) as MonitoringOverviewResponse;
-        queryClient.setQueryData(["monitoring", "overview"], overview);
+        const payload = JSON.parse(event.data) as MonitoringLiveStreamEvent | MonitoringSignalsResponse;
+        if ("overview" in payload) {
+          queryClient.setQueryData(["monitoring", "overview"], payload.overview);
+          queryClient.setQueryData<MonitoringSignalsResponse>(["monitoring", "signals"], {
+            signals: payload.signals,
+          });
+        }
       } catch {
         return;
       }
@@ -26,8 +31,9 @@ export const useMonitoringLiveStream = () => {
       }
 
       lastInvalidateAt = now;
-      void queryClient.invalidateQueries({ queryKey: ["monitoring", "signals"] });
       void queryClient.invalidateQueries({ queryKey: ["monitoring", "watchlist"] });
+      void queryClient.invalidateQueries({ queryKey: ["trading", "actions"] });
+      void queryClient.invalidateQueries({ queryKey: ["trading", "trades"] });
     };
 
     source.onerror = () => {

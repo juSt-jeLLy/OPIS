@@ -95,6 +95,10 @@ export interface WatchlistToken {
   mainPair?: string;
   mainPairTvl?: number;
   createdAt?: number | string;
+  executionMode?: "trade" | "delegate_exit";
+  assetsId?: string;
+  buyAmountAtomic?: string;
+  sellAmountAtomic?: string;
 }
 
 export interface NarrativeSnapshot {
