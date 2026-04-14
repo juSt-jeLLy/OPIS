@@ -3,6 +3,7 @@ import { buildAlertsFromSnapshot, buildSignalsFromSnapshot } from "./monitoring.
 import type {
   AnalyzeTokenInput,
   ModuleResult,
+  MonitoringModuleScores,
   MonitoringAlert,
   MonitoringOverview,
   MonitoringSignal,
@@ -15,12 +16,16 @@ import type { ConvictionModuleService } from "./modules/conviction/conviction.se
 import type { DcaModuleService } from "./modules/dca/dca.service";
 import type { DevDrainModuleService } from "./modules/dev-drain/dev-drain.service";
 import type { NarrativeModuleService } from "./modules/narrative/narrative.service";
+import type { WashModuleService } from "./modules/wash/wash.service";
+import type { RetentionModuleService } from "./modules/retention/retention.service";
+import type { DivergenceModuleService } from "./modules/divergence/divergence.service";
 import type { TosService } from "./tos/tos.service";
 import type { AveDataClient } from "../../shared/clients/ave/ave-client";
 import type { ContractInfo, TokenSummary } from "../../shared/clients/ave/ave-client.types";
 import { TRENDING_CHAINS, type SupportedChain } from "../../shared/constants/chains.constants";
 import type { Logger } from "../../shared/logger/logger";
 import { toNumber } from "../../shared/utils/number.utils";
+import type { MonitoringPersistenceRepository } from "../persistence/monitoring-persistence.repository";
 
 const hasNarrativeChainSupport = (chain: SupportedChain): chain is "solana" | "bsc" | "eth" => {
   return TRENDING_CHAINS.includes(chain as "solana" | "bsc" | "eth");
@@ -109,7 +114,7 @@ const tokenAddressFromTokenId = (tokenId: string): string => {
 };
 
 const safeModuleResult = (summary: string): ModuleResult => ({ score: 0, severity: "info", summary, metrics: [] });
-type ModuleName = "cabal" | "drain" | "conviction" | "narrative" | "dca";
+type ModuleName = keyof MonitoringModuleScores;
 type RealtimeTrigger = "wss_liq" | "wss_tx" | "wss_multi_tx";
 const MODULE_TTLS_MS = {
   cabal: 60 * 60_000,
@@ -117,14 +122,18 @@ const MODULE_TTLS_MS = {
   conviction: 2 * 60 * 60_000,
   narrative: 5 * 60_000,
   dca: 2 * 60 * 60_000,
+  wash: 5 * 60_000,
+  retention: 12 * 60 * 60_000,
+  divergence: 3 * 60_000,
 } as const;
 
 const deriveStrategy = (
-  modules: { cabal: ModuleResult; drain: ModuleResult; conviction: ModuleResult; narrative: ModuleResult; dca: ModuleResult },
+  modules: MonitoringModuleScores,
   tosScore: number,
 ): MonitoringSnapshot["strategy"] => {
-  if (modules.cabal.score >= 70 || modules.drain.score >= 70) {
-    return { mode: "DEFENSIVE_EXIT", confidence: Math.max(modules.cabal.score, modules.drain.score), rationale: "Manipulation or liquidity drain risk is elevated." };
+  const defensiveScore = Math.max(modules.cabal.score, modules.drain.score, modules.wash.score, modules.divergence.score);
+  if (defensiveScore >= 70) {
+    return { mode: "DEFENSIVE_EXIT", confidence: Number(defensiveScore.toFixed(2)), rationale: "Manipulation, wash flow, or liquidity-stress risk is elevated." };
   }
 
   if (modules.dca.score >= 65 && modules.conviction.score >= 60) {
@@ -132,8 +141,9 @@ const deriveStrategy = (
     return { mode: "DCA_ACCUMULATION", confidence, rationale: "Smart wallets are accumulating with repeat buy cadence." };
   }
 
-  if (tosScore >= 60 && modules.conviction.score >= 55) {
-    return { mode: "OPPORTUNITY_ENTRY", confidence: Number(Math.max(modules.conviction.score, modules.narrative.score).toFixed(2)), rationale: "Opportunity modules are aligned with favorable score composition." };
+  if (tosScore >= 60 && modules.conviction.score >= 55 && modules.retention.score >= 55) {
+    const confidence = Number(Math.max(modules.conviction.score, modules.narrative.score, modules.retention.score).toFixed(2));
+    return { mode: "OPPORTUNITY_ENTRY", confidence, rationale: "Conviction, narrative, and holder retention are aligned for opportunity setup." };
   }
 
   return { mode: "MONITOR", confidence: Number(tosScore.toFixed(2)), rationale: "Signal quality is mixed; keep monitoring for confirmation." };
@@ -141,22 +151,24 @@ const deriveStrategy = (
 
 const invalidateModulesForTrigger = (trigger: RealtimeTrigger): ModuleName[] => {
   if (trigger === "wss_liq") {
-    return ["drain"];
+    return ["drain", "divergence"];
   }
 
   if (trigger === "wss_multi_tx") {
-    return ["drain", "dca", "conviction"];
+    return ["drain", "dca", "conviction", "divergence"];
   }
 
-  return ["drain"];
+  return ["drain", "divergence"];
 };
 
 type OverviewListener = (overview: MonitoringOverview) => void;
+type SnapshotListener = (snapshot: MonitoringSnapshot, watchlistsByUser: Record<string, WatchlistToken[]>) => Promise<void> | void;
 const OVERVIEW_BROADCAST_DEBOUNCE_MS = 500;
 
 export class MonitoringService {
   private readonly moduleResultCache = new Map<string, { result: ModuleResult; expiresAt: number }>();
   private readonly overviewListeners = new Set<OverviewListener>();
+  private readonly snapshotListeners = new Set<SnapshotListener>();
   private overviewBroadcastTimer: NodeJS.Timeout | null = null;
 
   public constructor(
@@ -167,8 +179,12 @@ export class MonitoringService {
     private readonly convictionModule: ConvictionModuleService,
     private readonly dcaModule: DcaModuleService,
     private readonly narrativeModule: NarrativeModuleService,
+    private readonly washModule: WashModuleService,
+    private readonly retentionModule: RetentionModuleService,
+    private readonly divergenceModule: DivergenceModuleService,
     private readonly tosService: TosService,
     private readonly logger: Logger,
+    private readonly monitoringPersistence?: MonitoringPersistenceRepository,
   ) {}
 
   public async analyzeToken(input: AnalyzeTokenInput): Promise<MonitoringSnapshot> {
@@ -208,9 +224,21 @@ export class MonitoringService {
       updatedAt: new Date().toISOString(),
     };
 
+    const signals = buildSignalsFromSnapshot(snapshot);
+    const alerts = buildAlertsFromSnapshot(snapshot);
     this.repository.upsertSnapshot(snapshot);
-    this.repository.addSignals(buildSignalsFromSnapshot(snapshot));
-    this.repository.addAlerts(buildAlertsFromSnapshot(snapshot));
+    this.repository.addSignals(signals);
+    this.repository.addAlerts(alerts);
+    void this.monitoringPersistence?.saveSignals(signals);
+    void this.monitoringPersistence?.saveAlerts(alerts);
+    if (this.snapshotListeners.size > 0) {
+      const watchlistsByUser = this.repository.getUserWatchlists();
+      this.snapshotListeners.forEach((listener) => {
+        void Promise.resolve(listener(snapshot, watchlistsByUser)).catch((error) => {
+          this.logger.error("Snapshot listener failed", { tokenId: snapshot.tokenId, error: String(error) });
+        });
+      });
+    }
     this.scheduleOverviewBroadcast();
     return snapshot;
   }
@@ -228,7 +256,7 @@ export class MonitoringService {
     return { snapshots, alerts: this.repository.listAlerts(limit), generatedAt: new Date().toISOString() };
   }
 
-  public getSignals(limit = MAX_SIGNALS_RETURNED): MonitoringSignal[] {
+  public getSignals(limit = MAX_SIGNALS_RETURNED, userId?: string): MonitoringSignal[] {
     const dedupedByTokenModule = new Map<string, MonitoringSignal>();
     this.repository.listSignals(500).forEach((signal) => {
       const key = `${signal.tokenId}:${signal.module}`;
@@ -246,7 +274,7 @@ export class MonitoringService {
       });
     });
 
-    const userTokenIds = new Set(this.repository.getUserWatchlist().map((token) => token.tokenId));
+    const userTokenIds = new Set((userId ? this.repository.getUserWatchlist(userId) : []).map((token) => token.tokenId));
     const ordered = [...dedupedByTokenModule.values()].sort((left, right) => {
       const leftUser = userTokenIds.has(left.tokenId) ? 1 : 0;
       const rightUser = userTokenIds.has(right.tokenId) ? 1 : 0;
@@ -279,38 +307,44 @@ export class MonitoringService {
     return this.repository.listAlerts(limit);
   }
 
-  public replaceUserWatchlist(tokens: WatchlistToken[]): void {
-    this.repository.replaceUserWatchlist(tokens);
+  public replaceUserWatchlist(userId: string, tokens: WatchlistToken[]): void {
+    this.repository.replaceUserWatchlist(userId, tokens);
+    this.pruneDataOutsideWatchlist();
     this.scheduleOverviewBroadcast();
   }
 
   public setSystemWatchlist(tokens: WatchlistToken[]): void {
     this.repository.setSystemWatchlist(tokens);
+    this.pruneDataOutsideWatchlist();
     this.scheduleOverviewBroadcast();
   }
 
-  public getUserWatchlist(): WatchlistToken[] {
-    return this.repository.getUserWatchlist();
+  public getUserWatchlist(userId: string): WatchlistToken[] {
+    return this.repository.getUserWatchlist(userId);
+  }
+
+  public getUserWatchlists(): Record<string, WatchlistToken[]> {
+    return this.repository.getUserWatchlists();
   }
 
   public getSystemWatchlist(): WatchlistToken[] {
     return this.repository.getSystemWatchlist();
   }
 
-  public getWatchlists(): {
+  public getWatchlists(userId: string): {
     watchlist: WatchlistToken[];
     userWatchlist: WatchlistToken[];
     systemWatchlist: WatchlistToken[];
   } {
     return {
-      watchlist: this.repository.getWatchlist(),
-      userWatchlist: this.repository.getUserWatchlist(),
+      watchlist: this.repository.getWatchlist(userId),
+      userWatchlist: this.repository.getUserWatchlist(userId),
       systemWatchlist: this.repository.getSystemWatchlist(),
     };
   }
 
-  public getWatchlist(): WatchlistToken[] {
-    return this.repository.getWatchlist();
+  public getWatchlist(userId?: string): WatchlistToken[] {
+    return this.repository.getWatchlist(userId);
   }
 
   public async searchTokens(query: string, chain?: SupportedChain, limit = 40): Promise<WatchlistToken[]> {
@@ -337,6 +371,7 @@ export class MonitoringService {
 
   public async runWatchlistCycle(): Promise<MonitoringSnapshot[]> {
     const watchlist = this.repository.getWatchlist();
+    this.pruneDataOutsideWatchlist();
     const snapshots: MonitoringSnapshot[] = [];
     const batchSize = 1;
     for (let index = 0; index < watchlist.length; index += batchSize) {
@@ -362,46 +397,69 @@ export class MonitoringService {
     };
   }
 
+  public subscribeSnapshots(listener: SnapshotListener): () => void {
+    this.snapshotListeners.add(listener);
+    return () => {
+      this.snapshotListeners.delete(listener);
+    };
+  }
+
   private async evaluateModules(
     input: AnalyzeTokenInput,
     context: { creatorAddress?: string; pairId?: string; tokenAddress: string; tokenAge: number; tvlUsd: number; riskScore: number; name: string; symbol: string },
-  ): Promise<{ cabal: ModuleResult; drain: ModuleResult; conviction: ModuleResult; narrative: ModuleResult; dca: ModuleResult }> {
-    const [cabal, drain, conviction, narrative, dca] = await Promise.all([
-      this.evaluateModuleWithCache(
-        `${input.tokenId}:cabal`,
-        MODULE_TTLS_MS.cabal,
-        () => this.cabalModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain, creatorAddress: context.creatorAddress }),
-        "Cabal module could not process this token in the current cycle.",
-      ),
-      this.evaluateModuleWithCache(
-        `${input.tokenId}:drain`,
-        MODULE_TTLS_MS.drain,
-        () => this.drainModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain, pairId: context.pairId, tokenAgeHours: context.tokenAge, tvlUsd: context.tvlUsd, creatorAddress: context.creatorAddress, aveRiskScore: context.riskScore }),
-        "Drain module could not process this token in the current cycle.",
-      ),
-      this.evaluateModuleWithCache(
-        `${input.tokenId}:conviction`,
-        MODULE_TTLS_MS.conviction,
-        () => this.convictionModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain }),
-        "Conviction module could not process this token in the current cycle.",
-      ),
-      hasNarrativeChainSupport(input.chain)
-        ? this.evaluateModuleWithCache(
-            `${input.tokenId}:narrative`,
-            MODULE_TTLS_MS.narrative,
-            () => this.narrativeModule.evaluate({ tokenId: input.tokenId, chain: input.chain as "solana" | "bsc" | "eth", name: context.name, symbol: context.symbol }),
-            "Narrative module could not process this token in the current cycle.",
-          )
-        : Promise.resolve(fallbackNarrativeModule),
-      this.evaluateModuleWithCache(
-        `${input.tokenId}:dca`,
-        MODULE_TTLS_MS.dca,
-        () => this.dcaModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain }),
-        "DCA module could not process this token in the current cycle.",
-      ),
-    ]);
+  ): Promise<MonitoringModuleScores> {
+    const cabal = await this.evaluateModuleWithCache(
+      `${input.tokenId}:cabal`,
+      MODULE_TTLS_MS.cabal,
+      () => this.cabalModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain, creatorAddress: context.creatorAddress }),
+      "Cabal module could not process this token in the current cycle.",
+    );
+    const drain = await this.evaluateModuleWithCache(
+      `${input.tokenId}:drain`,
+      MODULE_TTLS_MS.drain,
+      () => this.drainModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain, pairId: context.pairId, tokenAgeHours: context.tokenAge, tvlUsd: context.tvlUsd, creatorAddress: context.creatorAddress, aveRiskScore: context.riskScore }),
+      "Drain module could not process this token in the current cycle.",
+    );
+    const conviction = await this.evaluateModuleWithCache(
+      `${input.tokenId}:conviction`,
+      MODULE_TTLS_MS.conviction,
+      () => this.convictionModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain }),
+      "Conviction module could not process this token in the current cycle.",
+    );
+    const narrative = hasNarrativeChainSupport(input.chain)
+      ? await this.evaluateModuleWithCache(
+          `${input.tokenId}:narrative`,
+          MODULE_TTLS_MS.narrative,
+          () => this.narrativeModule.evaluate({ tokenId: input.tokenId, chain: input.chain as "solana" | "bsc" | "eth", name: context.name, symbol: context.symbol }),
+          "Narrative module could not process this token in the current cycle.",
+        )
+      : fallbackNarrativeModule;
+    const dca = await this.evaluateModuleWithCache(
+      `${input.tokenId}:dca`,
+      MODULE_TTLS_MS.dca,
+      () => this.dcaModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain }),
+      "DCA module could not process this token in the current cycle.",
+    );
+    const wash = await this.evaluateModuleWithCache(
+      `${input.tokenId}:wash`,
+      MODULE_TTLS_MS.wash,
+      () => this.washModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain, creatorAddress: context.creatorAddress }),
+      "Wash detector could not process this token in the current cycle.",
+    );
+    const retention = await this.evaluateModuleWithCache(
+      `${input.tokenId}:retention`,
+      MODULE_TTLS_MS.retention,
+      () => this.retentionModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain, tokenAgeHours: context.tokenAge }),
+      "Retention tracker could not process this token in the current cycle.",
+    );
+    const divergence = await this.evaluateModuleWithCache(
+      `${input.tokenId}:divergence`,
+      MODULE_TTLS_MS.divergence,
+      () => this.divergenceModule.evaluate({ tokenId: input.tokenId, tokenAddress: context.tokenAddress, chain: input.chain, pairId: context.pairId }),
+      "Momentum divergence monitor could not process this token in the current cycle.",
+    );
 
-    return { cabal, drain, conviction, narrative, dca };
+    return { cabal, drain, conviction, narrative, dca, wash, retention, divergence };
   }
 
   private getCachedModuleResult(cacheKey: string): ModuleResult | undefined {
@@ -430,6 +488,17 @@ export class MonitoringService {
       const overview = this.getOverview(50);
       this.overviewListeners.forEach((listener) => listener(overview));
     }, OVERVIEW_BROADCAST_DEBOUNCE_MS);
+  }
+
+  private pruneDataOutsideWatchlist(): void {
+    const allowedTokenIds = new Set(this.repository.getWatchlist().map((token) => token.tokenId));
+    this.repository.pruneByTokenIds(allowedTokenIds);
+    [...this.moduleResultCache.keys()].forEach((cacheKey) => {
+      const tokenId = cacheKey.split(":")[0];
+      if (!allowedTokenIds.has(tokenId)) {
+        this.moduleResultCache.delete(cacheKey);
+      }
+    });
   }
 
   private async evaluateModuleWithCache(

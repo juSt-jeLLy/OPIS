@@ -12,6 +12,21 @@ export interface ModuleResult {
   metrics: ModuleMetric[];
 }
 
+export type CoreMonitoringModule = "cabal" | "drain" | "conviction" | "narrative" | "dca";
+export type AdvancedMonitoringModule = "wash" | "retention" | "divergence";
+export type MonitoringModule = CoreMonitoringModule | AdvancedMonitoringModule | "tos";
+
+export interface MonitoringModuleScores {
+  cabal: ModuleResult;
+  drain: ModuleResult;
+  conviction: ModuleResult;
+  narrative: ModuleResult;
+  dca: ModuleResult;
+  wash: ModuleResult;
+  retention: ModuleResult;
+  divergence: ModuleResult;
+}
+
 export interface MonitoringSnapshot {
   tokenId: string;
   chain: MonitoringChain;
@@ -27,13 +42,7 @@ export interface MonitoringSnapshot {
     zone: "safe" | "watch" | "act";
     polarity: "threat" | "opportunity";
   };
-  moduleScores: {
-    cabal: ModuleResult;
-    drain: ModuleResult;
-    conviction: ModuleResult;
-    narrative: ModuleResult;
-    dca: ModuleResult;
-  };
+  moduleScores: MonitoringModuleScores;
   updatedAt: string;
 }
 
@@ -52,7 +61,7 @@ export interface MonitoringSignal {
   tokenId: string;
   chain: MonitoringChain;
   symbol: string;
-  module: "cabal" | "drain" | "conviction" | "narrative" | "dca";
+  module: MonitoringModule;
   score: number;
   severity: ModuleResult["severity"];
   summary: string;
@@ -64,6 +73,11 @@ export interface MonitoringOverviewResponse {
   snapshots: MonitoringSnapshot[];
   alerts: MonitoringAlert[];
   generatedAt: string;
+}
+
+export interface MonitoringLiveStreamEvent {
+  overview: MonitoringOverviewResponse;
+  signals: MonitoringSignal[];
 }
 
 export interface MonitoringSignalsResponse {
@@ -83,6 +97,10 @@ export interface MonitoringWatchlistToken {
   mainPair?: string;
   mainPairTvl?: number;
   createdAt?: number | string;
+  executionMode?: "trade" | "delegate_exit";
+  assetsId?: string;
+  buyAmountAtomic?: string;
+  sellAmountAtomic?: string;
 }
 
 export interface MonitoringWatchlistResponse {

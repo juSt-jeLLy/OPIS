@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   ChevronDown,
   Eye,
+  Play,
   Shield,
   TrendingUp,
   Zap,
@@ -23,6 +24,12 @@ import {
 import { useMonitoringLiveStream } from "@/features/monitoring/hooks/use-monitoring-live-stream";
 import { useMonitoringTokenSearch } from "@/features/monitoring/hooks/use-monitoring-token-search";
 import type { MonitoringChain, MonitoringWatchlistToken } from "@/features/monitoring/monitoring.types";
+import {
+  useCreateDelegateWallet,
+  useDismissTradingAction,
+  useExecuteTradingAction,
+  useTradingActions,
+} from "@/features/trading/hooks/use-trading-actions";
 
 const CHAINS: MonitoringChain[] = ["solana", "bsc", "eth", "base"];
 type SearchChain = "all" | MonitoringChain;
@@ -45,7 +52,45 @@ const tosBg = (score: number): string =>
       ? "bg-yellow-400/10 border-yellow-400/20"
       : "bg-emerald-400/10 border-emerald-400/20";
 
+const safeScore = (value: unknown): number => {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? 0));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 const chainLabel = (chain: string): string => chain.charAt(0).toUpperCase() + chain.slice(1);
+
+type TokenConfigDraft = {
+  executionMode: "trade" | "delegate_exit";
+  assetsId: string;
+  buyAmountAtomic: string;
+  sellAmountAtomic: string;
+};
+
+const toTokenConfigDraft = (token: MonitoringWatchlistToken): TokenConfigDraft => ({
+  executionMode: token.executionMode ?? "trade",
+  assetsId: token.assetsId ?? "",
+  buyAmountAtomic: token.buyAmountAtomic ?? "",
+  sellAmountAtomic: token.sellAmountAtomic ?? "",
+});
+
+const toTokenConfigPatch = (
+  draft: TokenConfigDraft,
+): Partial<Pick<MonitoringWatchlistToken, "executionMode" | "assetsId" | "buyAmountAtomic" | "sellAmountAtomic">> => ({
+  executionMode: draft.executionMode,
+  assetsId: draft.assetsId.trim() || undefined,
+  buyAmountAtomic: draft.buyAmountAtomic.trim() || undefined,
+  sellAmountAtomic: draft.sellAmountAtomic.trim() || undefined,
+});
+
+const isTokenConfigDirty = (token: MonitoringWatchlistToken, draft: TokenConfigDraft): boolean => {
+  const persisted = toTokenConfigDraft(token);
+  return (
+    draft.executionMode !== persisted.executionMode ||
+    draft.assetsId !== persisted.assetsId ||
+    draft.buyAmountAtomic !== persisted.buyAmountAtomic ||
+    draft.sellAmountAtomic !== persisted.sellAmountAtomic
+  );
+};
 
 const Dashboard = () => {
   useMonitoringLiveStream();
@@ -55,13 +100,20 @@ const Dashboard = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchChain, setSearchChain] = useState<SearchChain>("all");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [tokenConfigDrafts, setTokenConfigDrafts] = useState<Record<string, TokenConfigDraft>>({});
+  const [tokenConfigSaveState, setTokenConfigSaveState] = useState<Record<string, "saving" | "error">>({});
+  const [walletCreationTokenId, setWalletCreationTokenId] = useState<string | null>(null);
 
   const { data, isLoading, isFetching, isError } = useMonitoringOverview();
   const { data: watchlistData } = useMonitoringWatchlist();
   const replaceWatchlist = useReplaceMonitoringWatchlist();
+  const createDelegateWallet = useCreateDelegateWallet();
+  const { data: actionsData } = useTradingActions();
+  const executeAction = useExecuteTradingAction();
+  const dismissAction = useDismissTradingAction();
 
-  const userWatchlist = watchlistData?.userWatchlist ?? [];
-  const systemWatchlist = watchlistData?.systemWatchlist ?? [];
+  const userWatchlist = useMemo(() => watchlistData?.userWatchlist ?? [], [watchlistData?.userWatchlist]);
+  const systemWatchlist = useMemo(() => watchlistData?.systemWatchlist ?? [], [watchlistData?.systemWatchlist]);
   const userWatchlistTokenIds = useMemo(() => new Set(userWatchlist.map((token) => token.tokenId)), [userWatchlist]);
 
   const { data: tokenSearchData, isFetching: isTokenSearchFetching } = useMonitoringTokenSearch(
@@ -103,8 +155,12 @@ const Dashboard = () => {
     return (tokenSearchData?.tokens ?? []).filter((token) => !userWatchlistTokenIds.has(token.tokenId));
   }, [tokenSearchData?.tokens, userWatchlistTokenIds]);
 
-  const handleReplaceUserWatchlist = async (tokens: MonitoringWatchlistToken[]) => {
+  const handleReplaceUserWatchlist = async (tokens: MonitoringWatchlistToken[], options?: { runCycle?: boolean }) => {
     await replaceWatchlist.mutateAsync(tokens);
+    if (options?.runCycle === false) {
+      return;
+    }
+
     await monitoringApi.runCycle().catch(() => {
       toast.warning("Watchlist updated. New signals will appear in the next cycle.");
     });
@@ -118,7 +174,10 @@ const Dashboard = () => {
     }
 
     try {
-      await handleReplaceUserWatchlist([token, ...userWatchlist]);
+      await handleReplaceUserWatchlist([
+        { ...token, executionMode: "trade", sellAmountAtomic: token.sellAmountAtomic ?? "100000000" },
+        ...userWatchlist,
+      ]);
       toast.success("Token added to your watchlist.");
     } catch {
       toast.error("Failed to update watchlist.");
@@ -128,9 +187,126 @@ const Dashboard = () => {
   const handleRemoveToken = async (tokenId: string) => {
     try {
       await handleReplaceUserWatchlist(userWatchlist.filter((token) => token.tokenId !== tokenId));
+      setTokenConfigDrafts((current) => {
+        const next = { ...current };
+        delete next[tokenId];
+        return next;
+      });
+      setTokenConfigSaveState((current) => {
+        const next = { ...current };
+        delete next[tokenId];
+        return next;
+      });
       toast.success("Token removed from your watchlist.");
     } catch {
       toast.error("Failed to update watchlist.");
+    }
+  };
+
+  const handleUpdateTokenConfig = async (
+    tokenId: string,
+    patch: Partial<
+      Pick<MonitoringWatchlistToken, "executionMode" | "assetsId" | "buyAmountAtomic" | "sellAmountAtomic">
+    >,
+  ): Promise<boolean> => {
+    const next = userWatchlist.map((token) => {
+      if (token.tokenId !== tokenId) {
+        return token;
+      }
+
+      return { ...token, ...patch };
+    });
+
+    try {
+      await handleReplaceUserWatchlist(next, { runCycle: false });
+      return true;
+    } catch {
+      toast.error("Failed to save token execution settings.");
+      return false;
+    }
+  };
+
+  const handleDraftChange = (token: MonitoringWatchlistToken, patch: Partial<TokenConfigDraft>): void => {
+    setTokenConfigDrafts((current) => ({
+      ...current,
+      [token.tokenId]: {
+        ...toTokenConfigDraft(token),
+        ...(current[token.tokenId] ?? {}),
+        ...patch,
+      },
+    }));
+    setTokenConfigSaveState((current) => {
+      if (!current[token.tokenId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[token.tokenId];
+      return next;
+    });
+  };
+
+  const handleCreateDelegateWallet = async (token: MonitoringWatchlistToken): Promise<void> => {
+    setWalletCreationTokenId(token.tokenId);
+    try {
+      const preferredName = `${(token.symbol ?? token.chain).toLowerCase()}_${Date.now().toString().slice(-6)}`;
+      const response = await createDelegateWallet.mutateAsync({ assetsName: preferredName });
+      const wallet = response.wallet;
+      handleDraftChange(token, { assetsId: wallet.assetsId });
+      const primaryAddress = wallet.addressList?.[0]?.address;
+      if (primaryAddress) {
+        toast.success(`Wallet created. assetsId set in draft. Primary address: ${primaryAddress}`);
+      } else {
+        toast.success("Wallet created. assetsId set in draft.");
+      }
+    } catch {
+      toast.error("Unable to create delegate wallet right now.");
+    } finally {
+      setWalletCreationTokenId(null);
+    }
+  };
+
+  const handleSaveTokenConfig = async (token: MonitoringWatchlistToken): Promise<void> => {
+    const draft = tokenConfigDrafts[token.tokenId] ?? toTokenConfigDraft(token);
+    if (!isTokenConfigDirty(token, draft)) {
+      return;
+    }
+
+    setTokenConfigSaveState((current) => ({ ...current, [token.tokenId]: "saving" }));
+    const saved = await handleUpdateTokenConfig(token.tokenId, toTokenConfigPatch(draft));
+    if (!saved) {
+      setTokenConfigSaveState((current) => ({ ...current, [token.tokenId]: "error" }));
+      return;
+    }
+
+    setTokenConfigSaveState((current) => {
+      const next = { ...current };
+      delete next[token.tokenId];
+      return next;
+    });
+    setTokenConfigDrafts((current) => {
+      const next = { ...current };
+      delete next[token.tokenId];
+      return next;
+    });
+    toast.success(`${token.symbol ?? token.tokenId} settings saved.`);
+  };
+
+  const handleExecuteAction = async (actionId: string) => {
+    try {
+      await executeAction.mutateAsync({ actionId });
+      toast.success("Trade action submitted to AVE Trading Skill.");
+    } catch {
+      toast.error("Execution failed. Check assetsId and delegate wallet permissions.");
+    }
+  };
+
+  const handleDismissAction = async (actionId: string) => {
+    try {
+      await dismissAction.mutateAsync(actionId);
+      toast.success("Action dismissed.");
+    } catch {
+      toast.error("Unable to dismiss action.");
     }
   };
 
@@ -148,6 +324,14 @@ const Dashboard = () => {
   }, [data?.snapshots, userWatchlistTokenIds]);
 
   const alerts = data?.alerts ?? [];
+  const pendingActions = useMemo(
+    () =>
+      (actionsData?.actions ?? [])
+        .filter((action) => action.status === "pending")
+        .sort((left, right) => right.priority - left.priority)
+        .slice(0, 8),
+    [actionsData?.actions],
+  );
   const snapshotByTokenId = useMemo(
     () => new Map(orderedSnapshots.map((snapshot) => [snapshot.tokenId, snapshot])),
     [orderedSnapshots],
@@ -269,22 +453,108 @@ const Dashboard = () => {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            {userWatchlist.map((token) => (
-              <div key={token.tokenId} className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary">
-                <span className="font-mono">{token.symbol ?? token.tokenId}</span>
-                <span className="text-muted-foreground">{token.chain.toUpperCase()}</span>
-                <button
-                  type="button"
-                  onClick={() => void handleRemoveToken(token.tokenId)}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <X className="h-3 w-3" />
-                </button>
+          <div className="space-y-3">
+            {userWatchlist.map((token) => {
+              const draft = tokenConfigDrafts[token.tokenId] ?? toTokenConfigDraft(token);
+              const saveState = tokenConfigSaveState[token.tokenId];
+              const dirty = isTokenConfigDirty(token, draft);
+              const saveBadgeClass =
+                saveState === "saving"
+                  ? "bg-primary/15 text-primary"
+                  : saveState === "error"
+                    ? "bg-red-500/15 text-red-400"
+                    : dirty
+                      ? "bg-yellow-500/15 text-yellow-400"
+                      : "bg-emerald-500/15 text-emerald-400";
+              const saveBadgeText =
+                saveState === "saving" ? "Saving..." : saveState === "error" ? "Save Failed" : dirty ? "Unsaved" : "Saved";
+
+              return (
+              <div key={token.tokenId} className="rounded-xl border border-border/60 bg-background/40 p-4">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <p className="font-mono text-sm text-foreground">{token.symbol ?? token.tokenId}</p>
+                    <p className="text-xs text-muted-foreground break-all">
+                      {token.name ?? token.tokenId} · {token.chain.toUpperCase()}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded px-2 py-1 text-[10px] font-mono uppercase ${saveBadgeClass}`}>{saveBadgeText}</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveTokenConfig(token)}
+                      disabled={!dirty || saveState === "saving" || replaceWatchlist.isPending}
+                      className="rounded-lg bg-primary/20 px-3 py-1 text-xs font-semibold text-primary disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRemoveToken(token.tokenId)}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-3">
+                  <select
+                    value={draft.executionMode}
+                    onChange={(event) =>
+                      handleDraftChange(token, {
+                        executionMode: event.target.value === "delegate_exit" ? "delegate_exit" : "trade",
+                      })
+                    }
+                    className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
+                  >
+                    <option value="trade">Trade API (manual)</option>
+                    <option value="delegate_exit">Delegate Auto Exit</option>
+                  </select>
+                  <div className="space-y-2">
+                    <input
+                      value={draft.assetsId}
+                      onChange={(event) => handleDraftChange(token, { assetsId: event.target.value })}
+                      placeholder="Delegate wallet assetsId (required for all trades)"
+                      className="w-full rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
+                    />
+                    <div className="flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={() => void handleCreateDelegateWallet(token)}
+                        disabled={walletCreationTokenId === token.tokenId || createDelegateWallet.isPending}
+                        className="rounded-lg bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      >
+                        {walletCreationTokenId === token.tokenId ? "Creating..." : "Create Delegate Wallet"}
+                      </button>
+                    </div>
+                    {draft.executionMode === "delegate_exit" ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                          value={draft.sellAmountAtomic}
+                          onChange={(event) => handleDraftChange(token, { sellAmountAtomic: event.target.value })}
+                          placeholder="Auto-exit amount (atomic)"
+                          className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
+                        />
+                        <div className="rounded-lg border border-border/60 bg-background/20 px-3 py-2 text-xs text-muted-foreground">
+                          Drain auto-exit will use this token config directly.
+                        </div>
+                      </div>
+                    ) : (
+                      <input
+                        value={draft.buyAmountAtomic}
+                        onChange={(event) => handleDraftChange(token, { buyAmountAtomic: event.target.value })}
+                        placeholder="Default buy amount (atomic, optional)"
+                        className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
+                      />
+                    )}
+                  </div>
+                </div>
               </div>
-            ))}
+            )})}
             {userWatchlist.length === 0 && (
-              <p className="text-sm text-muted-foreground">No custom tokens yet. Added tokens stay pinned on top.</p>
+              <p className="text-sm text-muted-foreground">
+                No custom tokens yet. Added tokens stay pinned and can be set to Trade API or Delegate Auto Exit.
+              </p>
             )}
           </div>
 
@@ -344,11 +614,22 @@ const Dashboard = () => {
                       <th className="text-center pb-3">Conv.</th>
                       <th className="text-center pb-3">Narr.</th>
                       <th className="text-center pb-3">DCA</th>
+                      <th className="text-center pb-3">Wash</th>
+                      <th className="text-center pb-3">Ret.</th>
+                      <th className="text-center pb-3">Div.</th>
                     </tr>
                   </thead>
                   <tbody>
                     {orderedSnapshots.map((snapshot) => {
                       const isUser = userWatchlistTokenIds.has(snapshot.tokenId);
+                      const cabalScore = safeScore(snapshot.moduleScores?.cabal?.score);
+                      const drainScore = safeScore(snapshot.moduleScores?.drain?.score);
+                      const convictionScore = safeScore(snapshot.moduleScores?.conviction?.score);
+                      const narrativeScore = safeScore(snapshot.moduleScores?.narrative?.score);
+                      const dcaScore = safeScore(snapshot.moduleScores?.dca?.score);
+                      const washScore = safeScore(snapshot.moduleScores?.wash?.score);
+                      const retentionScore = safeScore(snapshot.moduleScores?.retention?.score);
+                      const divergenceScore = safeScore(snapshot.moduleScores?.divergence?.score);
                       return (
                         <tr
                           key={snapshot.tokenId}
@@ -386,27 +667,36 @@ const Dashboard = () => {
                               {snapshot.tos.score.toFixed(2)}
                             </span>
                           </td>
-                          <td className={`py-3 text-center font-mono text-sm ${tosColor(snapshot.moduleScores.cabal.score)}`}>
-                            {snapshot.moduleScores.cabal.score.toFixed(2)}
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(cabalScore)}`}>
+                            {cabalScore.toFixed(2)}
                           </td>
-                          <td className={`py-3 text-center font-mono text-sm ${tosColor(snapshot.moduleScores.drain.score)}`}>
-                            {snapshot.moduleScores.drain.score.toFixed(2)}
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(drainScore)}`}>
+                            {drainScore.toFixed(2)}
                           </td>
-                          <td className={`py-3 text-center font-mono text-sm ${tosColor(snapshot.moduleScores.conviction.score)}`}>
-                            {snapshot.moduleScores.conviction.score.toFixed(2)}
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(convictionScore)}`}>
+                            {convictionScore.toFixed(2)}
                           </td>
-                          <td className={`py-3 text-center font-mono text-sm ${tosColor(snapshot.moduleScores.narrative.score)}`}>
-                            {snapshot.moduleScores.narrative.score.toFixed(2)}
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(narrativeScore)}`}>
+                            {narrativeScore.toFixed(2)}
                           </td>
-                          <td className={`py-3 text-center font-mono text-sm ${tosColor(snapshot.moduleScores.dca.score)}`}>
-                            {snapshot.moduleScores.dca.score.toFixed(2)}
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(dcaScore)}`}>
+                            {dcaScore.toFixed(2)}
+                          </td>
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(washScore)}`}>
+                            {washScore.toFixed(2)}
+                          </td>
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(retentionScore)}`}>
+                            {retentionScore.toFixed(2)}
+                          </td>
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(divergenceScore)}`}>
+                            {divergenceScore.toFixed(2)}
                           </td>
                         </tr>
                       );
                     })}
                     {orderedSnapshots.length === 0 && (
                       <tr>
-                        <td colSpan={10} className="py-6 text-center text-sm text-muted-foreground">
+                        <td colSpan={13} className="py-6 text-center text-sm text-muted-foreground">
                           {isLoading ? "Loading live monitoring feed..." : "No live data yet. Verify backend API key and watchlist."}
                         </td>
                       </tr>
@@ -417,7 +707,49 @@ const Dashboard = () => {
             </GlowingCard>
           </div>
 
-          <div>
+          <div className="space-y-6">
+            <GlowingCard>
+              <h2 className="text-lg font-bold text-foreground mb-4 flex items-center gap-2">
+                <Zap className="h-5 w-5 text-primary" />
+                Trade Actions
+              </h2>
+              <div className="space-y-3">
+                {pendingActions.map((action) => (
+                  <div key={action.id} className="rounded-lg border border-border/60 bg-background/40 p-3">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <p className="text-sm font-semibold text-foreground">
+                        {action.actionType === "buy" ? "Buy" : "Exit"} {action.symbol}
+                      </p>
+                      <span className="text-[10px] font-mono uppercase text-primary">{action.executionMode}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-2">{action.reason}</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleExecuteAction(action.id)}
+                        disabled={executeAction.isPending}
+                        className="inline-flex items-center gap-1 rounded-lg bg-primary/20 px-2.5 py-1.5 text-xs font-semibold text-primary disabled:opacity-50"
+                      >
+                        <Play className="h-3 w-3" />
+                        Execute
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDismissAction(action.id)}
+                        disabled={dismissAction.isPending}
+                        className="rounded-lg bg-muted px-2.5 py-1.5 text-xs font-semibold text-muted-foreground disabled:opacity-50"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {pendingActions.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No pending buy/exit actions right now.</p>
+                )}
+              </div>
+            </GlowingCard>
+
             <GlowingCard>
               <h2 className="text-lg font-bold text-foreground mb-6 flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5 text-primary" />

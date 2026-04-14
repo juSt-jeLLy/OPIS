@@ -2,6 +2,8 @@ import type { Request, Response } from "express";
 import type { MonitoringService } from "./monitoring.service";
 import type { SupportedChain } from "../../shared/constants/chains.constants";
 import { AppError } from "../../shared/errors/app-error";
+import { resolveUserId } from "../../shared/http/user-id";
+import type { WatchlistPersistenceRepository } from "../persistence/watchlist-persistence.repository";
 
 const parseLimit = (value: unknown, fallback: number): number => {
   const parsed = Number.parseInt(String(value ?? fallback), 10);
@@ -26,7 +28,20 @@ const parseOptionalChain = (value: unknown): SupportedChain | undefined => {
   return parseChain(chain);
 };
 
-const parseWatchlistEntry = (value: unknown): { tokenId: string; chain: SupportedChain; tokenAddress?: string; symbol?: string; name?: string; mainPair?: string; mainPairTvl?: number; createdAt?: number | string } => {
+const parseWatchlistEntry = (value: unknown): {
+  tokenId: string;
+  chain: SupportedChain;
+  tokenAddress?: string;
+  symbol?: string;
+  name?: string;
+  mainPair?: string;
+  mainPairTvl?: number;
+  createdAt?: number | string;
+  executionMode?: "trade" | "delegate_exit";
+  assetsId?: string;
+  buyAmountAtomic?: string;
+  sellAmountAtomic?: string;
+} => {
   const record = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
   const chain = parseChain(record.chain);
   const tokenId = String(record.tokenId ?? "");
@@ -42,23 +57,48 @@ const parseWatchlistEntry = (value: unknown): { tokenId: string; chain: Supporte
       typeof record.createdAt === "string" || typeof record.createdAt === "number"
         ? record.createdAt
         : undefined,
+    executionMode: record.executionMode === "delegate_exit" ? "delegate_exit" : "trade",
+    assetsId: typeof record.assetsId === "string" ? record.assetsId : undefined,
+    buyAmountAtomic: typeof record.buyAmountAtomic === "string" ? record.buyAmountAtomic : undefined,
+    sellAmountAtomic: typeof record.sellAmountAtomic === "string" ? record.sellAmountAtomic : undefined,
   };
 };
 
 export class MonitoringController {
-  public constructor(private readonly service: MonitoringService) {}
+  public constructor(
+    private readonly service: MonitoringService,
+    private readonly defaultUserId: string,
+    private readonly watchlistPersistence?: WatchlistPersistenceRepository,
+  ) {}
+
+  private async loadWatchlistIfMissing(userId: string): Promise<void> {
+    if (!this.watchlistPersistence || this.service.getUserWatchlist(userId).length > 0) {
+      return;
+    }
+
+    const stored = await this.watchlistPersistence.loadUserWatchlist(userId);
+    if (stored.length > 0) {
+      this.service.replaceUserWatchlist(userId, stored);
+    }
+  }
 
   public getOverview(request: Request, response: Response): void {
     response.json(this.service.getOverview(parseLimit(request.query.limit, 30)));
   }
 
   public streamOverview(request: Request, response: Response): void {
+    const userId = resolveUserId(request, this.defaultUserId);
+    const signalLimit = parseLimit(request.query.signalLimit, 80);
     response.setHeader("Content-Type", "text/event-stream");
     response.setHeader("Cache-Control", "no-cache");
     response.setHeader("Connection", "keep-alive");
     response.flushHeaders();
 
-    const emit = (payload = this.service.getOverview(50)): void => {
+    const emit = (overviewPayload = this.service.getOverview(50)): void => {
+      const payload = {
+        overview: overviewPayload,
+        signals: this.service.getSignals(signalLimit, userId),
+      };
       response.write(`data: ${JSON.stringify(payload)}\n\n`);
     };
 
@@ -70,15 +110,18 @@ export class MonitoringController {
   }
 
   public getSignals(request: Request, response: Response): void {
-    response.json({ signals: this.service.getSignals(parseLimit(request.query.limit, 50)) });
+    const userId = resolveUserId(request, this.defaultUserId);
+    response.json({ signals: this.service.getSignals(parseLimit(request.query.limit, 50), userId) });
   }
 
   public getAlerts(request: Request, response: Response): void {
     response.json({ alerts: this.service.getAlerts(parseLimit(request.query.limit, 30)) });
   }
 
-  public getWatchlist(_request: Request, response: Response): void {
-    response.json(this.service.getWatchlists());
+  public async getWatchlist(request: Request, response: Response): Promise<void> {
+    const userId = resolveUserId(request, this.defaultUserId);
+    await this.loadWatchlistIfMissing(userId);
+    response.json(this.service.getWatchlists(userId));
   }
 
   public async searchTokens(request: Request, response: Response): Promise<void> {
@@ -89,11 +132,13 @@ export class MonitoringController {
     response.json({ tokens });
   }
 
-  public replaceWatchlist(request: Request, response: Response): void {
+  public async replaceWatchlist(request: Request, response: Response): Promise<void> {
+    const userId = resolveUserId(request, this.defaultUserId);
     const rawTokens: unknown[] = Array.isArray(request.body?.tokens) ? request.body.tokens : [];
     const tokens = rawTokens.map(parseWatchlistEntry).filter((token) => token.tokenId.length > 0);
-    this.service.replaceUserWatchlist(tokens);
-    response.status(202).json(this.service.getWatchlists());
+    this.service.replaceUserWatchlist(userId, tokens);
+    await this.watchlistPersistence?.replaceUserWatchlist(userId, tokens);
+    response.status(202).json(this.service.getWatchlists(userId));
   }
 
   public async analyzeToken(request: Request, response: Response): Promise<void> {

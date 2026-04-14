@@ -5,6 +5,7 @@ import type { AppConfig } from "./shared/config/env";
 import { createErrorMiddleware } from "./shared/errors/error-middleware";
 import type { Logger } from "./shared/logger/logger";
 import { createMonitoringRoutes } from "./features/monitoring/monitoring.routes";
+import { createTradingRoutes } from "./features/trading/trading.routes";
 
 export const createApp = (container: AppContainer, config: AppConfig, logger: Logger) => {
   const app = express();
@@ -17,6 +18,9 @@ export const createApp = (container: AppContainer, config: AppConfig, logger: Lo
   });
 
   app.use("/api/monitoring", createMonitoringRoutes(container.monitoringController));
+  if (container.tradingController) {
+    app.use("/api/trading", createTradingRoutes(container.tradingController));
+  }
   app.use(createErrorMiddleware(logger));
   return app;
 };

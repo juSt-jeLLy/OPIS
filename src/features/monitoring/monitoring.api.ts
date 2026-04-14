@@ -7,11 +7,14 @@ import type {
   MonitoringWatchlistResponse,
   MonitoringWatchlistToken,
 } from "./monitoring.types";
+import { getOrCreateUserId } from "@/shared/user/user-id";
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  const userId = getOrCreateUserId();
   const response = await fetch(`${MONITORING_API_BASE}${path}`, {
     headers: {
       "Content-Type": "application/json",
+      "x-opis-user-id": userId,
     },
     ...init,
   });
@@ -24,6 +27,10 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 export const monitoringApi = {
+  streamUrl: (): string => {
+    const params = new URLSearchParams({ userId: getOrCreateUserId() });
+    return `${MONITORING_API_BASE}/stream?${params.toString()}`;
+  },
   getOverview: (): Promise<MonitoringOverviewResponse> => request<MonitoringOverviewResponse>("/overview"),
   getSignals: (): Promise<MonitoringSignalsResponse> => request<MonitoringSignalsResponse>("/signals"),
   getAlerts: (): Promise<MonitoringAlertsResponse> => request<MonitoringAlertsResponse>("/alerts"),
