@@ -194,7 +194,7 @@ const Signals = () => {
     const config = userWatchlistByTokenId.get(input.tokenId);
     const assetsId = config?.assetsId?.trim();
     if (!assetsId) {
-      toast.error("Add this token to your watchlist and set assetsId first.");
+      toast.error("Set this token's delegate wallet assetsId in Dashboard watchlist settings first.");
       return;
     }
 

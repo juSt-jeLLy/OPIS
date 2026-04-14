@@ -152,7 +152,9 @@ const Dashboard = () => {
 
   const handleUpdateTokenConfig = async (
     tokenId: string,
-    patch: Partial<Pick<MonitoringWatchlistToken, "executionMode" | "assetsId" | "sellAmountAtomic">>,
+    patch: Partial<
+      Pick<MonitoringWatchlistToken, "executionMode" | "assetsId" | "buyAmountAtomic" | "sellAmountAtomic">
+    >,
   ) => {
     const next = userWatchlist.map((token) => {
       if (token.tokenId !== tokenId) {
@@ -361,30 +363,40 @@ const Dashboard = () => {
                     <option value="trade">Trade API (manual)</option>
                     <option value="delegate_exit">Delegate Auto Exit</option>
                   </select>
-                  {token.executionMode === "delegate_exit" ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="space-y-2">
+                    <input
+                      defaultValue={token.assetsId ?? ""}
+                      onBlur={(event) =>
+                        void handleUpdateTokenConfig(token.tokenId, { assetsId: event.target.value.trim() })
+                      }
+                      placeholder="Delegate wallet assetsId (required for all trades)"
+                      className="w-full rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
+                    />
+                    {token.executionMode === "delegate_exit" ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                          defaultValue={token.sellAmountAtomic ?? ""}
+                          onBlur={(event) =>
+                            void handleUpdateTokenConfig(token.tokenId, { sellAmountAtomic: event.target.value.trim() })
+                          }
+                          placeholder="Auto-exit amount (atomic)"
+                          className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
+                        />
+                        <div className="rounded-lg border border-border/60 bg-background/20 px-3 py-2 text-xs text-muted-foreground">
+                          Drain auto-exit will use this token config directly.
+                        </div>
+                      </div>
+                    ) : (
                       <input
-                        defaultValue={token.assetsId ?? ""}
+                        defaultValue={token.buyAmountAtomic ?? ""}
                         onBlur={(event) =>
-                          void handleUpdateTokenConfig(token.tokenId, { assetsId: event.target.value.trim() })
+                          void handleUpdateTokenConfig(token.tokenId, { buyAmountAtomic: event.target.value.trim() })
                         }
-                        placeholder="Delegate assetsId"
+                        placeholder="Default buy amount (atomic, optional)"
                         className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
                       />
-                      <input
-                        defaultValue={token.sellAmountAtomic ?? ""}
-                        onBlur={(event) =>
-                          void handleUpdateTokenConfig(token.tokenId, { sellAmountAtomic: event.target.value.trim() })
-                        }
-                        placeholder="Auto-exit amount (atomic)"
-                        className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
-                      />
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-border/60 bg-background/20 px-3 py-2 text-xs text-muted-foreground">
-                      Manual mode: buy/exit amount is chosen directly on the Signals page action button.
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
