@@ -2,19 +2,6 @@
 
 Monitoring-first quant intelligence platform built for **AVE Claw Hackathon 2026** (Complete Application Track), using real AVE data + WSS streams to detect manipulation, risk, and opportunity in real time.
 
-## AVE Claw Hackathon Context
-
-- Event: **AVE Claw Hackathon 2026**
-- Timeline: **Apr 4 – Apr 15, 2026**
-- Track target: **Complete Application** (Monitoring Skill + Trading Skill)
-- Product positioning: **Monitoring is primary**, execution/trading is optional and signal-driven
-
-This project is designed to maximize judging dimensions:
-
-- **Innovation (30%)**: 8-model on-chain intelligence stack + TOS composite layer
-- **Technical Execution (30%)**: modular backend architecture, live WSS ingestion, SSE signal stream, typed frontend
-- **Real-World Value (40%)**: actionable threat/opportunity monitoring with user watchlists and execution hooks
-
 ---
 
 ## What OPIS Does
