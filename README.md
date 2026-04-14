@@ -215,6 +215,15 @@ TOS =
 
 Advanced monitors (`wash`, `retention`, `divergence`) are surfaced as first-class signals and score overlays for decision quality.
 
+### Strategy Derivation (Runtime)
+
+Snapshots are mapped to one strategy mode:
+
+- `DEFENSIVE_EXIT`: if max(`cabal`, `drain`, `wash`, `divergence`) >= `70`
+- `DCA_ACCUMULATION`: if `dca >= 65` and `conviction >= 60`
+- `OPPORTUNITY_ENTRY`: if `tos >= 60`, `conviction >= 55`, and `retention >= 55`
+- `MONITOR`: default fallback when signals are mixed
+
 ---
 
 ## Real-Time Flow (WSS → Signals UI)
@@ -228,6 +237,25 @@ Advanced monitors (`wash`, `retention`, `divergence`) are surfaced as first-clas
 5. Frontend updates dashboard/signals in-place.
 
 No synthetic mock data is used in normal operation.
+
+### Realtime Control Knobs
+
+Event-driven module invalidation uses per-topic cooldowns:
+
+- `liq`: `30s`
+- `tx`: `120s`
+- `multi_tx`: `45s`
+
+Per-module cache TTLs (to balance latency and API load):
+
+- `cabal`: `60m`
+- `drain`: `1m`
+- `conviction`: `120m`
+- `narrative`: `5m`
+- `dca`: `120m`
+- `wash`: `5m`
+- `retention`: `12h`
+- `divergence`: `3m`
 
 ---
 
@@ -299,6 +327,18 @@ Supabase-backed repositories are used for:
 - `trade_executions`
 
 Runtime also keeps a fast in-memory repository for hot signal/alert serving.
+
+Schema and retention logic live in:
+
+- `backend/sql/supabase-schema.sql`
+
+Row caps are enforced with SQL triggers:
+
+- `monitoring_signals`: latest `30` rows
+- `monitoring_alerts`: latest `30` rows
+- `user_watchlist`: latest `30` rows per `user_id`
+- `trade_actions`: latest `30` rows per `user_id`
+- `trades`: latest `30` rows per `user_id`
 
 ---
 
