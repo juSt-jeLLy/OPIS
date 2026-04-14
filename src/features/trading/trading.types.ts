@@ -55,3 +55,20 @@ export interface SignalExecuteRequest {
   assetsId?: string;
   executionMode?: "trade" | "delegate_exit";
 }
+
+export interface DelegateWalletInfo {
+  assetsId: string;
+  assetsName?: string;
+  status?: "enabled" | "disabled";
+  type?: "self" | "delegate";
+  addressList?: Array<{ chain: MonitoringChain; address: string }>;
+}
+
+export interface CreateDelegateWalletResponse {
+  userId: string;
+  wallet: DelegateWalletInfo;
+}
+
+export interface GetDelegateWalletResponse {
+  wallet: DelegateWalletInfo | null;
+}

@@ -5,6 +5,8 @@ import { createDelegateSignature } from "./ave-trading-signing";
 import type {
   AutoGasTier,
   AveTradingEnvelope,
+  CreateDelegateWalletRequest,
+  CreateDelegateWalletResponse,
   DelegateUserInfo,
   QuoteRequest,
   QuoteResponse,
@@ -58,6 +60,15 @@ export class AveTradingClient {
       { method: "GET", signed: true, query: { assetsIds: assetsId } },
     );
     return response[0] ?? null;
+  }
+
+  /** Creates a new delegate wallet (proxy wallet) under the API organization. */
+  public async createDelegateWallet(input: CreateDelegateWalletRequest): Promise<CreateDelegateWalletResponse> {
+    return this.request<CreateDelegateWalletResponse>("/v1/thirdParty/user/generateWallet", {
+      method: "POST",
+      body: input,
+      signed: true,
+    });
   }
 
   private async request<T>(
@@ -130,4 +141,3 @@ export class AveTradingClient {
     return payload as T;
   }
 }
-

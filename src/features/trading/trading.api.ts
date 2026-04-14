@@ -1,5 +1,11 @@
 import { getOrCreateUserId } from "@/shared/user/user-id";
-import type { SignalExecuteRequest, TradingActionsResponse, TradingTradesResponse } from "./trading.types";
+import type {
+  CreateDelegateWalletResponse,
+  GetDelegateWalletResponse,
+  SignalExecuteRequest,
+  TradingActionsResponse,
+  TradingTradesResponse,
+} from "./trading.types";
 
 const TRADING_API_BASE = import.meta.env.VITE_TRADING_API_URL ?? "http://localhost:4090/api/trading";
 
@@ -31,6 +37,13 @@ export const tradingApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  createDelegateWallet: (assetsName?: string): Promise<CreateDelegateWalletResponse> =>
+    request("/delegate-wallets", {
+      method: "POST",
+      body: JSON.stringify(assetsName ? { assetsName } : {}),
+    }),
+  getDelegateWallet: (assetsId: string): Promise<GetDelegateWalletResponse> =>
+    request(`/delegate-wallets/${encodeURIComponent(assetsId)}`),
   dismissAction: (actionId: string): Promise<unknown> => request(`/actions/${actionId}/dismiss`, { method: "POST" }),
   listTrades: (limit = 80): Promise<TradingTradesResponse> => request(`/trades?limit=${limit}`),
 };

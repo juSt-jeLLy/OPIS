@@ -8,6 +8,8 @@ export const createTradingRoutes = (controller: TradingController): Router => {
   router.post("/quote", asyncHandler((request, response) => controller.quote(request, response)));
   router.post("/orders", asyncHandler((request, response) => controller.createOrder(request, response)));
   router.get("/orders/:orderId", asyncHandler((request, response) => controller.getOrderStatus(request, response)));
+  router.post("/delegate-wallets", asyncHandler((request, response) => controller.createDelegateWallet(request, response)));
+  router.get("/delegate-wallets/:assetsId", asyncHandler((request, response) => controller.getDelegateWallet(request, response)));
 
   router.get("/actions", asyncHandler((request, response) => controller.listActions(request, response)));
   router.post("/actions/:actionId/execute", asyncHandler((request, response) => controller.executeAction(request, response)));

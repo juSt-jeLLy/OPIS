@@ -25,6 +25,7 @@ import { useMonitoringLiveStream } from "@/features/monitoring/hooks/use-monitor
 import { useMonitoringTokenSearch } from "@/features/monitoring/hooks/use-monitoring-token-search";
 import type { MonitoringChain, MonitoringWatchlistToken } from "@/features/monitoring/monitoring.types";
 import {
+  useCreateDelegateWallet,
   useDismissTradingAction,
   useExecuteTradingAction,
   useTradingActions,
@@ -53,6 +54,39 @@ const tosBg = (score: number): string =>
 
 const chainLabel = (chain: string): string => chain.charAt(0).toUpperCase() + chain.slice(1);
 
+type TokenConfigDraft = {
+  executionMode: "trade" | "delegate_exit";
+  assetsId: string;
+  buyAmountAtomic: string;
+  sellAmountAtomic: string;
+};
+
+const toTokenConfigDraft = (token: MonitoringWatchlistToken): TokenConfigDraft => ({
+  executionMode: token.executionMode ?? "trade",
+  assetsId: token.assetsId ?? "",
+  buyAmountAtomic: token.buyAmountAtomic ?? "",
+  sellAmountAtomic: token.sellAmountAtomic ?? "",
+});
+
+const toTokenConfigPatch = (
+  draft: TokenConfigDraft,
+): Partial<Pick<MonitoringWatchlistToken, "executionMode" | "assetsId" | "buyAmountAtomic" | "sellAmountAtomic">> => ({
+  executionMode: draft.executionMode,
+  assetsId: draft.assetsId.trim() || undefined,
+  buyAmountAtomic: draft.buyAmountAtomic.trim() || undefined,
+  sellAmountAtomic: draft.sellAmountAtomic.trim() || undefined,
+});
+
+const isTokenConfigDirty = (token: MonitoringWatchlistToken, draft: TokenConfigDraft): boolean => {
+  const persisted = toTokenConfigDraft(token);
+  return (
+    draft.executionMode !== persisted.executionMode ||
+    draft.assetsId !== persisted.assetsId ||
+    draft.buyAmountAtomic !== persisted.buyAmountAtomic ||
+    draft.sellAmountAtomic !== persisted.sellAmountAtomic
+  );
+};
+
 const Dashboard = () => {
   useMonitoringLiveStream();
 
@@ -61,10 +95,14 @@ const Dashboard = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchChain, setSearchChain] = useState<SearchChain>("all");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [tokenConfigDrafts, setTokenConfigDrafts] = useState<Record<string, TokenConfigDraft>>({});
+  const [tokenConfigSaveState, setTokenConfigSaveState] = useState<Record<string, "saving" | "error">>({});
+  const [walletCreationTokenId, setWalletCreationTokenId] = useState<string | null>(null);
 
   const { data, isLoading, isFetching, isError } = useMonitoringOverview();
   const { data: watchlistData } = useMonitoringWatchlist();
   const replaceWatchlist = useReplaceMonitoringWatchlist();
+  const createDelegateWallet = useCreateDelegateWallet();
   const { data: actionsData } = useTradingActions();
   const executeAction = useExecuteTradingAction();
   const dismissAction = useDismissTradingAction();
@@ -144,6 +182,16 @@ const Dashboard = () => {
   const handleRemoveToken = async (tokenId: string) => {
     try {
       await handleReplaceUserWatchlist(userWatchlist.filter((token) => token.tokenId !== tokenId));
+      setTokenConfigDrafts((current) => {
+        const next = { ...current };
+        delete next[tokenId];
+        return next;
+      });
+      setTokenConfigSaveState((current) => {
+        const next = { ...current };
+        delete next[tokenId];
+        return next;
+      });
       toast.success("Token removed from your watchlist.");
     } catch {
       toast.error("Failed to update watchlist.");
@@ -155,7 +203,7 @@ const Dashboard = () => {
     patch: Partial<
       Pick<MonitoringWatchlistToken, "executionMode" | "assetsId" | "buyAmountAtomic" | "sellAmountAtomic">
     >,
-  ) => {
+  ): Promise<boolean> => {
     const next = userWatchlist.map((token) => {
       if (token.tokenId !== tokenId) {
         return token;
@@ -166,9 +214,77 @@ const Dashboard = () => {
 
     try {
       await handleReplaceUserWatchlist(next, { runCycle: false });
+      return true;
     } catch {
       toast.error("Failed to save token execution settings.");
+      return false;
     }
+  };
+
+  const handleDraftChange = (token: MonitoringWatchlistToken, patch: Partial<TokenConfigDraft>): void => {
+    setTokenConfigDrafts((current) => ({
+      ...current,
+      [token.tokenId]: {
+        ...toTokenConfigDraft(token),
+        ...(current[token.tokenId] ?? {}),
+        ...patch,
+      },
+    }));
+    setTokenConfigSaveState((current) => {
+      if (!current[token.tokenId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[token.tokenId];
+      return next;
+    });
+  };
+
+  const handleCreateDelegateWallet = async (token: MonitoringWatchlistToken): Promise<void> => {
+    setWalletCreationTokenId(token.tokenId);
+    try {
+      const preferredName = `${(token.symbol ?? token.chain).toLowerCase()}_${Date.now().toString().slice(-6)}`;
+      const response = await createDelegateWallet.mutateAsync({ assetsName: preferredName });
+      const wallet = response.wallet;
+      handleDraftChange(token, { assetsId: wallet.assetsId });
+      const primaryAddress = wallet.addressList?.[0]?.address;
+      if (primaryAddress) {
+        toast.success(`Wallet created. assetsId set in draft. Primary address: ${primaryAddress}`);
+      } else {
+        toast.success("Wallet created. assetsId set in draft.");
+      }
+    } catch {
+      toast.error("Unable to create delegate wallet right now.");
+    } finally {
+      setWalletCreationTokenId(null);
+    }
+  };
+
+  const handleSaveTokenConfig = async (token: MonitoringWatchlistToken): Promise<void> => {
+    const draft = tokenConfigDrafts[token.tokenId] ?? toTokenConfigDraft(token);
+    if (!isTokenConfigDirty(token, draft)) {
+      return;
+    }
+
+    setTokenConfigSaveState((current) => ({ ...current, [token.tokenId]: "saving" }));
+    const saved = await handleUpdateTokenConfig(token.tokenId, toTokenConfigPatch(draft));
+    if (!saved) {
+      setTokenConfigSaveState((current) => ({ ...current, [token.tokenId]: "error" }));
+      return;
+    }
+
+    setTokenConfigSaveState((current) => {
+      const next = { ...current };
+      delete next[token.tokenId];
+      return next;
+    });
+    setTokenConfigDrafts((current) => {
+      const next = { ...current };
+      delete next[token.tokenId];
+      return next;
+    });
+    toast.success(`${token.symbol ?? token.tokenId} settings saved.`);
   };
 
   const handleExecuteAction = async (actionId: string) => {
@@ -333,7 +449,22 @@ const Dashboard = () => {
           </div>
 
           <div className="space-y-3">
-            {userWatchlist.map((token) => (
+            {userWatchlist.map((token) => {
+              const draft = tokenConfigDrafts[token.tokenId] ?? toTokenConfigDraft(token);
+              const saveState = tokenConfigSaveState[token.tokenId];
+              const dirty = isTokenConfigDirty(token, draft);
+              const saveBadgeClass =
+                saveState === "saving"
+                  ? "bg-primary/15 text-primary"
+                  : saveState === "error"
+                    ? "bg-red-500/15 text-red-400"
+                    : dirty
+                      ? "bg-yellow-500/15 text-yellow-400"
+                      : "bg-emerald-500/15 text-emerald-400";
+              const saveBadgeText =
+                saveState === "saving" ? "Saving..." : saveState === "error" ? "Save Failed" : dirty ? "Unsaved" : "Saved";
+
+              return (
               <div key={token.tokenId} className="rounded-xl border border-border/60 bg-background/40 p-4">
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div>
@@ -342,19 +473,30 @@ const Dashboard = () => {
                       {token.name ?? token.tokenId} · {token.chain.toUpperCase()}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleRemoveToken(token.tokenId)}
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded px-2 py-1 text-[10px] font-mono uppercase ${saveBadgeClass}`}>{saveBadgeText}</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveTokenConfig(token)}
+                      disabled={!dirty || saveState === "saving" || replaceWatchlist.isPending}
+                      className="rounded-lg bg-primary/20 px-3 py-1 text-xs font-semibold text-primary disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRemoveToken(token.tokenId)}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-3">
                   <select
-                    value={token.executionMode ?? "trade"}
+                    value={draft.executionMode}
                     onChange={(event) =>
-                      void handleUpdateTokenConfig(token.tokenId, {
+                      handleDraftChange(token, {
                         executionMode: event.target.value === "delegate_exit" ? "delegate_exit" : "trade",
                       })
                     }
@@ -365,20 +507,26 @@ const Dashboard = () => {
                   </select>
                   <div className="space-y-2">
                     <input
-                      defaultValue={token.assetsId ?? ""}
-                      onBlur={(event) =>
-                        void handleUpdateTokenConfig(token.tokenId, { assetsId: event.target.value.trim() })
-                      }
+                      value={draft.assetsId}
+                      onChange={(event) => handleDraftChange(token, { assetsId: event.target.value })}
                       placeholder="Delegate wallet assetsId (required for all trades)"
                       className="w-full rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
                     />
-                    {token.executionMode === "delegate_exit" ? (
+                    <div className="flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={() => void handleCreateDelegateWallet(token)}
+                        disabled={walletCreationTokenId === token.tokenId || createDelegateWallet.isPending}
+                        className="rounded-lg bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      >
+                        {walletCreationTokenId === token.tokenId ? "Creating..." : "Create Delegate Wallet"}
+                      </button>
+                    </div>
+                    {draft.executionMode === "delegate_exit" ? (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         <input
-                          defaultValue={token.sellAmountAtomic ?? ""}
-                          onBlur={(event) =>
-                            void handleUpdateTokenConfig(token.tokenId, { sellAmountAtomic: event.target.value.trim() })
-                          }
+                          value={draft.sellAmountAtomic}
+                          onChange={(event) => handleDraftChange(token, { sellAmountAtomic: event.target.value })}
                           placeholder="Auto-exit amount (atomic)"
                           className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
                         />
@@ -388,10 +536,8 @@ const Dashboard = () => {
                       </div>
                     ) : (
                       <input
-                        defaultValue={token.buyAmountAtomic ?? ""}
-                        onBlur={(event) =>
-                          void handleUpdateTokenConfig(token.tokenId, { buyAmountAtomic: event.target.value.trim() })
-                        }
+                        value={draft.buyAmountAtomic}
+                        onChange={(event) => handleDraftChange(token, { buyAmountAtomic: event.target.value })}
                         placeholder="Default buy amount (atomic, optional)"
                         className="rounded-lg border border-border bg-background/60 px-2 py-2 text-xs"
                       />
@@ -399,7 +545,7 @@ const Dashboard = () => {
                   </div>
                 </div>
               </div>
-            ))}
+            )})}
             {userWatchlist.length === 0 && (
               <p className="text-sm text-muted-foreground">
                 No custom tokens yet. Added tokens stay pinned and can be set to Trade API or Delegate Auto Exit.

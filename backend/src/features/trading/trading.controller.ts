@@ -79,6 +79,17 @@ export class TradingController {
     response.json({ actions: await this.service.listActions(userId, parseLimit(request.query.limit, 60)) });
   }
 
+  public async createDelegateWallet(request: Request, response: Response): Promise<void> {
+    const userId = resolveUserId(request, this.defaultUserId);
+    const preferredName = typeof request.body?.assetsName === "string" ? request.body.assetsName : undefined;
+    response.status(201).json(await this.service.createDelegateWallet(userId, preferredName));
+  }
+
+  public async getDelegateWallet(request: Request, response: Response): Promise<void> {
+    const assetsId = requiredString(request.params.assetsId, "assetsId");
+    response.json(await this.service.getDelegateWallet(assetsId));
+  }
+
   public async executeAction(request: Request, response: Response): Promise<void> {
     const userId = resolveUserId(request, this.defaultUserId);
     const actionId = requiredString(request.params.actionId, "actionId");

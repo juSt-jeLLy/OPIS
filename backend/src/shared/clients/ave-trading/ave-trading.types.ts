@@ -65,4 +65,17 @@ export interface DelegateUserInfo {
   status?: "enabled" | "disabled";
   type?: "self" | "delegate";
   assetsName?: string;
+  addressList?: Array<{ chain: SupportedChain; address: string }>;
+}
+
+export interface CreateDelegateWalletRequest {
+  assetsName: string;
+  returnMnemonic?: boolean;
+}
+
+export interface CreateDelegateWalletResponse {
+  assetsId: string;
+  assetsName?: string;
+  mnemonic?: string;
+  addressList?: Array<{ chain: SupportedChain; address: string }>;
 }

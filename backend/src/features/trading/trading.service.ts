@@ -59,6 +59,56 @@ export class TradingService {
     return this.tradingClient.quote(input);
   }
 
+  public async createDelegateWallet(userId: string, preferredName?: string): Promise<{
+    userId: string;
+    wallet: {
+      assetsId: string;
+      assetsName?: string;
+      addressList?: Array<{ chain: MonitoringSnapshot["chain"]; address: string }>;
+    };
+  }> {
+    const suffix = Date.now().toString().slice(-6);
+    const sanitizedName = (preferredName ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "")
+      .slice(0, 24);
+    const assetsName = sanitizedName.length > 0 ? sanitizedName : `opis_${userId.slice(-6)}_${suffix}`;
+    const wallet = await this.tradingClient.createDelegateWallet({ assetsName, returnMnemonic: false });
+    return {
+      userId,
+      wallet: {
+        assetsId: wallet.assetsId,
+        assetsName: wallet.assetsName ?? assetsName,
+        addressList: wallet.addressList,
+      },
+    };
+  }
+
+  public async getDelegateWallet(assetsId: string): Promise<{
+    wallet: {
+      assetsId: string;
+      assetsName?: string;
+      status?: "enabled" | "disabled";
+      type?: "self" | "delegate";
+      addressList?: Array<{ chain: MonitoringSnapshot["chain"]; address: string }>;
+    } | null;
+  }> {
+    const wallet = await this.tradingClient.getUserByAssetsId(assetsId);
+    if (!wallet) {
+      return { wallet: null };
+    }
+
+    return {
+      wallet: {
+        assetsId: wallet.assetsId,
+        assetsName: wallet.assetsName,
+        status: wallet.status,
+        type: wallet.type,
+        addressList: wallet.addressList,
+      },
+    };
+  }
+
   public async createOrder(input: ExecuteTradeInput): Promise<{ orderId: string; status?: SwapOrderStatus; trade: TradeExecution }> {
     const quote = await this.tradingClient.quote({
       chain: input.chain,

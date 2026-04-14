@@ -47,6 +47,12 @@ export const useExecuteSignalTrade = () => {
   });
 };
 
+export const useCreateDelegateWallet = () => {
+  return useMutation({
+    mutationFn: (input?: { assetsName?: string }) => tradingApi.createDelegateWallet(input?.assetsName),
+  });
+};
+
 export const useDismissTradingAction = () => {
   const client = useQueryClient();
   return useMutation({
