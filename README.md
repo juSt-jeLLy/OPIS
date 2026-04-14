@@ -2,6 +2,10 @@
 
 Monitoring-first quant intelligence platform built for **AVE Claw Hackathon 2026** (Complete Application Track), using real AVE data + WSS streams to detect manipulation, risk, and opportunity in real time.
 
+Full submission documentation:
+
+- [Project Documentation (AVE Skills + Quant Models)](docs/PROJECT_DOCUMENTATION_AVE_CLAW_2026.md)
+
 ## AVE Claw Hackathon Context
 
 - Event: **AVE Claw Hackathon 2026**
