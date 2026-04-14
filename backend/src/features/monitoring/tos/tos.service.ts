@@ -1,5 +1,5 @@
 import { TOS_THRESHOLDS, TOS_WEIGHTS } from "../monitoring.constants";
-import type { ModuleResult, TosResult } from "../monitoring.types";
+import type { MonitoringModuleScores, TosResult } from "../monitoring.types";
 
 const toZone = (score: number): TosResult["zone"] => {
   if (score < TOS_THRESHOLDS.safe) {
@@ -13,14 +13,16 @@ const toZone = (score: number): TosResult["zone"] => {
   return "act";
 };
 
-const toPolarity = (modules: { cabal: ModuleResult; drain: ModuleResult; conviction: ModuleResult; narrative: ModuleResult; dca: ModuleResult }): TosResult["polarity"] => {
+type TosInputs = Pick<MonitoringModuleScores, "cabal" | "drain" | "conviction" | "narrative" | "dca">;
+
+const toPolarity = (modules: TosInputs): TosResult["polarity"] => {
   const threatScore = modules.cabal.score + modules.drain.score;
   const opportunityScore = modules.conviction.score + modules.narrative.score + modules.dca.score;
   return threatScore >= opportunityScore ? "threat" : "opportunity";
 };
 
 export class TosService {
-  public compose(modules: { cabal: ModuleResult; drain: ModuleResult; conviction: ModuleResult; narrative: ModuleResult; dca: ModuleResult }): TosResult {
+  public compose(modules: TosInputs): TosResult {
     const score =
       modules.cabal.score * TOS_WEIGHTS.cabal +
       modules.drain.score * TOS_WEIGHTS.drain +

@@ -5,6 +5,9 @@ import type { ConvictionModuleService } from "./modules/conviction/conviction.se
 import type { DcaModuleService } from "./modules/dca/dca.service";
 import type { DevDrainModuleService } from "./modules/dev-drain/dev-drain.service";
 import type { NarrativeModuleService } from "./modules/narrative/narrative.service";
+import type { WashModuleService } from "./modules/wash/wash.service";
+import type { RetentionModuleService } from "./modules/retention/retention.service";
+import type { DivergenceModuleService } from "./modules/divergence/divergence.service";
 import { MonitoringRepository } from "./monitoring.repository";
 import { MonitoringService } from "./monitoring.service";
 import { TosService } from "./tos/tos.service";
@@ -52,6 +55,9 @@ describe("MonitoringService", () => {
       { evaluate: vi.fn().mockResolvedValue(moduleResult) } as unknown as ConvictionModuleService,
       { evaluate: vi.fn().mockResolvedValue(moduleResult) } as unknown as DcaModuleService,
       { evaluate: vi.fn().mockResolvedValue(moduleResult) } as unknown as NarrativeModuleService,
+      { evaluate: vi.fn().mockResolvedValue(moduleResult) } as unknown as WashModuleService,
+      { evaluate: vi.fn().mockResolvedValue(moduleResult) } as unknown as RetentionModuleService,
+      { evaluate: vi.fn().mockResolvedValue(moduleResult) } as unknown as DivergenceModuleService,
       new TosService(),
       logger,
     );
@@ -73,4 +79,3 @@ describe("MonitoringService", () => {
     expect(signals[0].tokenId).toBe("0xuser-bsc");
   });
 });
-

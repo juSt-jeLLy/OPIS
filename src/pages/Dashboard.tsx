@@ -52,6 +52,11 @@ const tosBg = (score: number): string =>
       ? "bg-yellow-400/10 border-yellow-400/20"
       : "bg-emerald-400/10 border-emerald-400/20";
 
+const safeScore = (value: unknown): number => {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? 0));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 const chainLabel = (chain: string): string => chain.charAt(0).toUpperCase() + chain.slice(1);
 
 type TokenConfigDraft = {
@@ -609,11 +614,22 @@ const Dashboard = () => {
                       <th className="text-center pb-3">Conv.</th>
                       <th className="text-center pb-3">Narr.</th>
                       <th className="text-center pb-3">DCA</th>
+                      <th className="text-center pb-3">Wash</th>
+                      <th className="text-center pb-3">Ret.</th>
+                      <th className="text-center pb-3">Div.</th>
                     </tr>
                   </thead>
                   <tbody>
                     {orderedSnapshots.map((snapshot) => {
                       const isUser = userWatchlistTokenIds.has(snapshot.tokenId);
+                      const cabalScore = safeScore(snapshot.moduleScores?.cabal?.score);
+                      const drainScore = safeScore(snapshot.moduleScores?.drain?.score);
+                      const convictionScore = safeScore(snapshot.moduleScores?.conviction?.score);
+                      const narrativeScore = safeScore(snapshot.moduleScores?.narrative?.score);
+                      const dcaScore = safeScore(snapshot.moduleScores?.dca?.score);
+                      const washScore = safeScore(snapshot.moduleScores?.wash?.score);
+                      const retentionScore = safeScore(snapshot.moduleScores?.retention?.score);
+                      const divergenceScore = safeScore(snapshot.moduleScores?.divergence?.score);
                       return (
                         <tr
                           key={snapshot.tokenId}
@@ -651,27 +667,36 @@ const Dashboard = () => {
                               {snapshot.tos.score.toFixed(2)}
                             </span>
                           </td>
-                          <td className={`py-3 text-center font-mono text-sm ${tosColor(snapshot.moduleScores.cabal.score)}`}>
-                            {snapshot.moduleScores.cabal.score.toFixed(2)}
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(cabalScore)}`}>
+                            {cabalScore.toFixed(2)}
                           </td>
-                          <td className={`py-3 text-center font-mono text-sm ${tosColor(snapshot.moduleScores.drain.score)}`}>
-                            {snapshot.moduleScores.drain.score.toFixed(2)}
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(drainScore)}`}>
+                            {drainScore.toFixed(2)}
                           </td>
-                          <td className={`py-3 text-center font-mono text-sm ${tosColor(snapshot.moduleScores.conviction.score)}`}>
-                            {snapshot.moduleScores.conviction.score.toFixed(2)}
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(convictionScore)}`}>
+                            {convictionScore.toFixed(2)}
                           </td>
-                          <td className={`py-3 text-center font-mono text-sm ${tosColor(snapshot.moduleScores.narrative.score)}`}>
-                            {snapshot.moduleScores.narrative.score.toFixed(2)}
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(narrativeScore)}`}>
+                            {narrativeScore.toFixed(2)}
                           </td>
-                          <td className={`py-3 text-center font-mono text-sm ${tosColor(snapshot.moduleScores.dca.score)}`}>
-                            {snapshot.moduleScores.dca.score.toFixed(2)}
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(dcaScore)}`}>
+                            {dcaScore.toFixed(2)}
+                          </td>
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(washScore)}`}>
+                            {washScore.toFixed(2)}
+                          </td>
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(retentionScore)}`}>
+                            {retentionScore.toFixed(2)}
+                          </td>
+                          <td className={`py-3 text-center font-mono text-sm ${tosColor(divergenceScore)}`}>
+                            {divergenceScore.toFixed(2)}
                           </td>
                         </tr>
                       );
                     })}
                     {orderedSnapshots.length === 0 && (
                       <tr>
-                        <td colSpan={10} className="py-6 text-center text-sm text-muted-foreground">
+                        <td colSpan={13} className="py-6 text-center text-sm text-muted-foreground">
                           {isLoading ? "Loading live monitoring feed..." : "No live data yet. Verify backend API key and watchlist."}
                         </td>
                       </tr>

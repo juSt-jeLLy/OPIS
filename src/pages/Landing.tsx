@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
-import { Eye, Shield, Brain, Globe, Zap, Target, Activity, ArrowRight, ChevronDown } from "lucide-react";
+import { Eye, Shield, Brain, Globe, Zap, Target, Activity, ArrowRight, ChevronDown, Waves, Clock3, TrendingUp, Repeat } from "lucide-react";
 import heroImage from "@/assets/hero-eye.jpg";
 import ParticleBackground from "@/components/ParticleBackground";
 import StatTicker from "@/components/StatTicker";
@@ -52,8 +52,8 @@ const Landing = () => {
           </h1>
 
           <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 opacity-0 animate-fade-up" style={{ animationDelay: "600ms", animationFillMode: "forwards" }}>
-            Detect coordinated manipulation. Stalk smart money. Execute before the market reacts.
-            Real-time quant signals across Solana, BSC, ETH & Base.
+            Detect coordinated manipulation with 5 core quant models plus 3 advanced monitors.
+            Real-time WSS-driven signal intelligence across Solana, BSC, ETH & Base.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16 opacity-0 animate-fade-up" style={{ animationDelay: "800ms", animationFillMode: "forwards" }}>
@@ -81,19 +81,19 @@ const Landing = () => {
       {/* Stat Ticker */}
       <StatTicker />
 
-      {/* 4 Signal Modules */}
+      {/* Monitoring Models */}
       <section className="relative py-24 px-4">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl sm:text-5xl font-bold mb-4 opacity-0 animate-fade-up" style={{ animationDelay: "100ms", animationFillMode: "forwards" }}>
-              <span className="text-gradient-primary">4 Quant Signal</span> Modules
+              <span className="text-gradient-primary">5 Core Quant Models</span> + 3 Advanced Monitors
             </h2>
             <p className="text-muted-foreground text-lg max-w-xl mx-auto">
-              Every module reads Ave.ai labels and turns them into quantitative scores.
+              Every model runs against live AVE data and continuously refreshes scores via WSS-triggered analysis.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <FeatureCard
               icon={Eye}
               title="Cabal Fingerprinter"
@@ -118,6 +118,30 @@ const Landing = () => {
               description="Monitor narrative volume acceleration across Solana, BSC, and ETH simultaneously. Surface rotation opportunities with 2-6 hour windows."
               delay={650}
             />
+            <FeatureCard
+              icon={Repeat}
+              title="Smart Wallet DCA Monitor"
+              description="Score repeat dip-buys, cadence stability, and accumulation behavior from smart wallet cohorts to identify sustained conviction entries."
+              delay={800}
+            />
+            <FeatureCard
+              icon={Waves}
+              title="Wash Trading Detector"
+              description="Flag wallet-loop and reciprocal flow patterns that inflate reported volume and hide distribution under artificial on-chain activity."
+              delay={950}
+            />
+            <FeatureCard
+              icon={Clock3}
+              title="Holder Retention Tracker"
+              description="Compare early holder retention against age-adjusted benchmarks to separate sticky tokens from fast-exit token cohorts."
+              delay={1100}
+            />
+            <FeatureCard
+              icon={TrendingUp}
+              title="Momentum Divergence Monitor"
+              description="Detect when price rises while internal health decays from smart-wallet sell pressure and liquidity removal stress."
+              delay={1250}
+            />
           </div>
         </div>
       </section>
@@ -133,7 +157,7 @@ const Landing = () => {
                 Threat + Opportunity Score
               </h2>
               <p className="text-muted-foreground mb-8 leading-relaxed">
-                All four modules feed into a single composite score from 0-100. The TOS engine determines signal polarity — is this a threat to exit, or an opportunity to enter?
+                The 5 core models feed into a single composite score from 0-100. Advanced monitors act as live overlays for wash, retention, and divergence context.
               </p>
               <div className="space-y-4">
                 {[
@@ -156,12 +180,13 @@ const Landing = () => {
                   <div className="text-muted-foreground">// TOS Composition</div>
                   <div>
                     <span className="text-primary">TOS</span> = (
-                    <span className="text-primary">Cabal</span>×0.30) + (
-                    <span className="text-primary">Drain</span>×0.25)
+                    <span className="text-primary">Cabal</span>×0.25) + (
+                    <span className="text-primary">Drain</span>×0.20)
                   </div>
                   <div className="pl-8">
-                    + (<span className="text-primary">Conv</span>×0.30) + (
-                    <span className="text-primary">Narr</span>×0.15)
+                    + (<span className="text-primary">Conv</span>×0.25) + (
+                    <span className="text-primary">Narr</span>×0.15) + (
+                    <span className="text-primary">DCA</span>×0.15)
                   </div>
                   <div className="border-t border-border pt-3 mt-3">
                     <div className="flex justify-between">
@@ -180,15 +205,15 @@ const Landing = () => {
         </div>
       </section>
 
-      {/* 3 Trading Strategies */}
+      {/* Execution Connectors */}
       <section className="relative py-24 px-4 border-t border-border">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl sm:text-5xl font-bold mb-4">
-              <span className="text-gradient-primary">3 Autonomous</span> Strategies
+              <span className="text-gradient-primary">Execution Connectors</span> (Optional)
             </h2>
             <p className="text-muted-foreground text-lg max-w-xl mx-auto">
-              From signal detection to trade execution — fully automated.
+              Monitoring is the core product. Trade actions remain available when users choose to execute from signals.
             </p>
           </div>
 

@@ -30,6 +30,9 @@ const snapshot: MonitoringSnapshot = {
     conviction: { score: 5, severity: "info", summary: "low", metrics: [] },
     narrative: { score: 5, severity: "info", summary: "low", metrics: [] },
     dca: { score: 4, severity: "info", summary: "low", metrics: [] },
+    wash: { score: 10, severity: "warning", summary: "wash", metrics: [] },
+    retention: { score: 20, severity: "info", summary: "retention", metrics: [] },
+    divergence: { score: 25, severity: "warning", summary: "divergence", metrics: [] },
   },
   updatedAt: new Date().toISOString(),
 };
@@ -139,4 +142,3 @@ describe("TradingService", () => {
     expect((actionsRepository.updateStatus as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0);
   });
 });
-

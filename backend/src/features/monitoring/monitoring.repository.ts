@@ -104,6 +104,20 @@ export class MonitoringRepository {
     return mergeWatchlists(userWatchlist, this.systemWatchlist);
   }
 
+  public pruneByTokenIds(allowedTokenIds: Set<string>): void {
+    [...this.snapshots.entries()].forEach(([key, snapshot]) => {
+      if (!allowedTokenIds.has(snapshot.tokenId)) {
+        this.snapshots.delete(key);
+      }
+    });
+
+    const filteredSignals = this.signals.filter((signal) => allowedTokenIds.has(signal.tokenId));
+    this.signals.splice(0, this.signals.length, ...filteredSignals);
+
+    const filteredAlerts = this.alerts.filter((alert) => allowedTokenIds.has(alert.tokenId));
+    this.alerts.splice(0, this.alerts.length, ...filteredAlerts);
+  }
+
   public saveNarrativeSnapshots(snapshots: NarrativeSnapshot[]): void {
     snapshots.forEach((snapshot) => {
       const key = narrativeKey(snapshot.chain, snapshot.narrative);

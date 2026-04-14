@@ -30,6 +30,10 @@ const CONTRACT_CACHE_TTL_MS = 86_400_000;
 const SMART_WALLET_CACHE_TTL_MS = 21_600_000;
 const KLINE_CACHE_TTL_MS = 600_000;
 const TRENDING_CACHE_TTL_MS = 20_000;
+const TOP_HOLDERS_CACHE_TTL_MS = 120_000;
+const ADDRESS_TX_CACHE_TTL_MS = 30_000;
+const ADDRESS_PNL_CACHE_TTL_MS = 45_000;
+const LIQUIDITY_TX_CACHE_TTL_MS = 30_000;
 
 const sleep = async (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
@@ -157,6 +161,10 @@ export class AveDataClient {
   private readonly contractCache = new TimedCache<ContractInfo>();
   private readonly smartWalletCache = new TimedCache<SmartWalletInfo[]>();
   private readonly klineCache = new TimedCache<KlinePoint[]>();
+  private readonly topHoldersCache = new TimedCache<TopHolder[]>();
+  private readonly addressTxCache = new TimedCache<AddressTx[]>();
+  private readonly addressPnlCache = new TimedCache<AddressPnl>();
+  private readonly liquidityTxCache = new TimedCache<LiquidityTx[]>();
 
   public constructor(private readonly baseUrl: string, private readonly apiKey: string, private readonly logger: Logger) {}
 
@@ -215,11 +223,19 @@ export class AveDataClient {
   }
 
   public async getTopHolders(tokenId: string): Promise<TopHolder[]> {
+    const cacheHit = this.topHoldersCache.get(tokenId);
+    if (cacheHit) {
+      return cacheHit;
+    }
+
     try {
       const data = await this.request<TopHolder[]>(`/v2/tokens/top100/${tokenId}`);
-      return toArray<TopHolder>(data);
+      const holders = toArray<TopHolder>(data);
+      this.topHoldersCache.set(tokenId, holders, TOP_HOLDERS_CACHE_TTL_MS);
+      return holders;
     } catch (error) {
       if (this.isNoDataError(error)) {
+        this.topHoldersCache.set(tokenId, [], TOP_HOLDERS_CACHE_TTL_MS);
         return [];
       }
 
@@ -228,11 +244,20 @@ export class AveDataClient {
   }
 
   public async getAddressTx(query: AddressTxQuery): Promise<AddressTx[]> {
+    const cacheKey = `${query.walletAddress}:${query.chain}:${query.tokenAddress}:${query.fromTime ?? 0}:${query.pageSize ?? 100}`;
+    const cacheHit = this.addressTxCache.get(cacheKey);
+    if (cacheHit) {
+      return cacheHit;
+    }
+
     try {
       const data = await this.request<AddressTx[]>("/v2/address/tx", { wallet_address: query.walletAddress, chain: query.chain, token_address: query.tokenAddress, page_size: String(query.pageSize ?? 100), ...(query.fromTime ? { from_time: String(query.fromTime) } : {}) });
-      return toNestedArray<AddressTx>(data, ["result", "txs"]);
+      const txs = toNestedArray<AddressTx>(data, ["result", "txs"]);
+      this.addressTxCache.set(cacheKey, txs, ADDRESS_TX_CACHE_TTL_MS);
+      return txs;
     } catch (error) {
       if (this.isNoDataError(error)) {
+        this.addressTxCache.set(cacheKey, [], ADDRESS_TX_CACHE_TTL_MS);
         return [];
       }
 
@@ -241,10 +266,19 @@ export class AveDataClient {
   }
 
   public async getAddressPnl(query: AddressPnlQuery): Promise<AddressPnl> {
+    const cacheKey = `${query.walletAddress}:${query.chain}:${query.tokenAddress}`;
+    const cacheHit = this.addressPnlCache.get(cacheKey);
+    if (cacheHit) {
+      return cacheHit;
+    }
+
     try {
-      return await this.request<AddressPnl>("/v2/address/pnl", { wallet_address: query.walletAddress, chain: query.chain, token_address: query.tokenAddress });
+      const pnl = await this.request<AddressPnl>("/v2/address/pnl", { wallet_address: query.walletAddress, chain: query.chain, token_address: query.tokenAddress });
+      this.addressPnlCache.set(cacheKey, pnl, ADDRESS_PNL_CACHE_TTL_MS);
+      return pnl;
     } catch (error) {
       if (this.isNoDataError(error)) {
+        this.addressPnlCache.set(cacheKey, {}, ADDRESS_PNL_CACHE_TTL_MS);
         return {};
       }
 
@@ -288,11 +322,20 @@ export class AveDataClient {
   }
 
   public async getLiquidityTxs(query: LiquidityTxQuery): Promise<LiquidityTx[]> {
+    const cacheKey = `${query.pairId}:${query.fromTime ?? 0}:${query.pageSize ?? 100}`;
+    const cacheHit = this.liquidityTxCache.get(cacheKey);
+    if (cacheHit) {
+      return cacheHit;
+    }
+
     try {
       const data = await this.request<LiquidityTx[]>(`/v2/txs/liq/${query.pairId}`, { page_size: String(query.pageSize ?? 100), type: "all", ...(query.fromTime ? { from_time: String(query.fromTime) } : {}) });
-      return toNestedArray<LiquidityTx>(data, ["txs", "result"]);
+      const txs = toNestedArray<LiquidityTx>(data, ["txs", "result"]);
+      this.liquidityTxCache.set(cacheKey, txs, LIQUIDITY_TX_CACHE_TTL_MS);
+      return txs;
     } catch (error) {
       if (this.isNoDataError(error)) {
+        this.liquidityTxCache.set(cacheKey, [], LIQUIDITY_TX_CACHE_TTL_MS);
         return [];
       }
 

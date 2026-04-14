@@ -9,6 +9,9 @@ import { DevDrainModuleService } from "../../features/monitoring/modules/dev-dra
 import { ConvictionModuleService } from "../../features/monitoring/modules/conviction/conviction.service";
 import { DcaModuleService } from "../../features/monitoring/modules/dca/dca.service";
 import { NarrativeModuleService } from "../../features/monitoring/modules/narrative/narrative.service";
+import { WashModuleService } from "../../features/monitoring/modules/wash/wash.service";
+import { RetentionModuleService } from "../../features/monitoring/modules/retention/retention.service";
+import { DivergenceModuleService } from "../../features/monitoring/modules/divergence/divergence.service";
 import { TosService } from "../../features/monitoring/tos/tos.service";
 import { MonitoringService } from "../../features/monitoring/monitoring.service";
 import { MonitoringController } from "../../features/monitoring/monitoring.controller";
@@ -51,6 +54,9 @@ export const createContainer = (config: AppConfig, logger: Logger): AppContainer
   const convictionModule = new ConvictionModuleService(client);
   const dcaModule = new DcaModuleService(client);
   const narrativeModule = new NarrativeModuleService(client, repository);
+  const washModule = new WashModuleService(client);
+  const retentionModule = new RetentionModuleService(client);
+  const divergenceModule = new DivergenceModuleService(client);
   const tosService = new TosService();
   const monitoringService = new MonitoringService(
     client,
@@ -60,6 +66,9 @@ export const createContainer = (config: AppConfig, logger: Logger): AppContainer
     convictionModule,
     dcaModule,
     narrativeModule,
+    washModule,
+    retentionModule,
+    divergenceModule,
     tosService,
     logger,
     monitoringPersistence,

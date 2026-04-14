@@ -27,6 +27,9 @@ const snapshotBase: MonitoringSnapshot = {
     conviction: { score: 5, severity: "info", summary: "ok", metrics: [] },
     narrative: { score: 3, severity: "info", summary: "ok", metrics: [] },
     dca: { score: 2, severity: "info", summary: "ok", metrics: [] },
+    wash: { score: 0, severity: "info", summary: "ok", metrics: [] },
+    retention: { score: 0, severity: "info", summary: "ok", metrics: [] },
+    divergence: { score: 0, severity: "info", summary: "ok", metrics: [] },
   },
   updatedAt: new Date().toISOString(),
 };
@@ -68,4 +71,3 @@ describe("RiskGateService", () => {
     expect(decision).toBeNull();
   });
 });
-
