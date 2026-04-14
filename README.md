@@ -6,19 +6,6 @@ Full submission documentation:
 
 - [Project Documentation (AVE Skills + Quant Models)](docs/PROJECT_DOCUMENTATION_AVE_CLAW_2026.md)
 
-## AVE Claw Hackathon Context
-
-- Event: **AVE Claw Hackathon 2026**
-- Timeline: **Apr 4 – Apr 15, 2026**
-- Track target: **Complete Application** (Monitoring Skill + Trading Skill)
-- Product positioning: **Monitoring is primary**, execution/trading is optional and signal-driven
-
-This project is designed to maximize judging dimensions:
-
-- **Innovation (30%)**: 8-model on-chain intelligence stack + TOS composite layer
-- **Technical Execution (30%)**: modular backend architecture, live WSS ingestion, SSE signal stream, typed frontend
-- **Real-World Value (40%)**: actionable threat/opportunity monitoring with user watchlists and execution hooks
-
 ---
 
 ## What OPIS Does
